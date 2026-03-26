@@ -1,0 +1,184 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user of the application.",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "format": "email"
+        },
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "user"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["email", "name", "role", "createdAt"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "A construction project.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Client or project name"
+        },
+        "address": {
+          "type": "string"
+        },
+        "contact": {
+          "type": "string"
+        },
+        "houseType": {
+          "type": "string"
+        },
+        "designer": {
+          "type": "string",
+          "description": "The ID of the designer for this project"
+        },
+        "startDate": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "The UID of the user who owns this project"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "in-progress", "completed"]
+        },
+        "isShared": {
+          "type": "boolean",
+          "description": "Whether the project is shared publicly"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["name", "address", "contact", "houseType", "startDate", "ownerId", "createdAt", "updatedAt"]
+    },
+    "Designer": {
+      "title": "Designer",
+      "description": "A designer associated with projects.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "The UID of the user who created this designer"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["name", "ownerId", "createdAt"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "A task or schedule item within a project.",
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "startDate": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "endDate": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "in-progress", "completed"]
+        },
+        "color": {
+          "type": "string"
+        },
+        "reminderTiming": {
+          "type": "string",
+          "enum": ["none", "at_event", "1_hour", "1_day", "1_week"]
+        },
+        "reminderEmails": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "reminderPhone": {
+          "type": "string"
+        },
+        "subtasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "title": { "type": "string" },
+              "completed": { "type": "boolean" },
+              "dueDate": { "type": "string" }
+            }
+          }
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["projectId", "title", "startDate", "endDate", "status", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/User"
+      },
+      "description": "Stores user profiles."
+    },
+    "/projects/{projectId}": {
+      "schema": {
+        "$ref": "#/entities/Project"
+      },
+      "description": "Stores construction projects."
+    },
+    "/designers/{designerId}": {
+      "schema": {
+        "$ref": "#/entities/Designer"
+      },
+      "description": "Stores designers."
+    },
+    "/tasks/{taskId}": {
+      "schema": {
+        "$ref": "#/entities/Task"
+      },
+      "description": "Stores tasks for projects."
+    }
+  }
+}

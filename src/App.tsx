@@ -1,0 +1,104 @@
+import React, { useState } from 'react';
+import { AuthProvider, useAuth } from './components/AuthProvider';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import Login from './components/Login';
+import Dashboard from './components/Dashboard';
+import ProjectDetail from './components/ProjectDetail';
+import BackgroundAnimation from './components/BackgroundAnimation';
+import { Calendar, HardHat, LogOut } from 'lucide-react';
+
+function AppContent() {
+  const { user, loading, signOut } = useAuth();
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Login />;
+  }
+
+  return (
+    <div className="min-h-screen flex flex-col relative">
+      <header className="sticky top-0 z-50 bg-white/10 backdrop-blur-xl border-b border-white/20 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between h-16">
+            <div className="flex items-center cursor-pointer" onClick={() => setSelectedProjectId(null)}>
+              <h1 className="text-lg sm:text-xl font-black text-slate-900 tracking-widest uppercase">Project Management</h1>
+            </div>
+            <div className="flex items-center space-x-2 sm:space-x-4">
+              <span className="hidden sm:inline text-sm text-slate-500 font-medium">{user.email}</span>
+              <button
+                onClick={signOut}
+                className="inline-flex items-center px-3 py-1.5 border border-white/20 text-sm leading-4 font-medium rounded-lg text-slate-600 hover:bg-white/20 hover:text-slate-900 focus:outline-none transition-all"
+              >
+                <LogOut className="h-4 w-4 mr-2" />
+                <span className="hidden xs:inline">Sign Out</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+        {selectedProjectId === 'personal' ? (
+          <ProjectDetail 
+            projectId={`personal_${user.uid}`} 
+            isPersonal={true}
+            onBack={() => setSelectedProjectId(null)} 
+          />
+        ) : selectedProjectId ? (
+          <ProjectDetail 
+            projectId={selectedProjectId} 
+            onBack={() => setSelectedProjectId(null)} 
+          />
+        ) : (
+          <Dashboard onSelectProject={setSelectedProjectId} />
+        )}
+      </main>
+    </div>
+  );
+}
+
+export default function App() {
+  const path = window.location.pathname;
+  if (path.startsWith('/shared/')) {
+    const projectId = path.split('/')[2];
+    return (
+      <ErrorBoundary>
+        <BackgroundAnimation />
+        <div className="min-h-screen flex flex-col relative">
+          <header className="sticky top-0 z-50 bg-white/10 backdrop-blur-xl border-b border-white/20 shadow-sm">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="flex justify-between h-16">
+                <div className="flex items-center">
+                  <a href="/" className="flex items-center hover:opacity-80 transition-opacity">
+                    <h1 className="text-lg sm:text-xl font-black text-slate-900 tracking-widest uppercase">Project Management</h1>
+                  </a>
+                </div>
+              </div>
+            </div>
+          </header>
+          <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+            <ProjectDetail projectId={projectId} readOnly={true} />
+          </main>
+        </div>
+      </ErrorBoundary>
+    );
+  }
+
+  return (
+    <ErrorBoundary>
+      <BackgroundAnimation />
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </ErrorBoundary>
+  );
+}
+

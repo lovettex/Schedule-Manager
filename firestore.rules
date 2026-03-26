@@ -1,0 +1,197 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - email: string (required)
+    //   - name: string (required)
+    //   - role: string (required, 'admin' or 'user')
+    //   - createdAt: timestamp (required, immutable)
+    //
+    // Collection: projects
+    // Document ID: {projectId}
+    // Fields:
+    //   - name: string (required, max 100 chars)
+    //   - address: string (required, max 200 chars)
+    //   - contact: string (required, max 100 chars)
+    //   - houseType: string (required, max 100 chars)
+    //   - startDate: timestamp (required)
+    //   - ownerId: string (required, immutable, must match auth.uid)
+    //   - status: string (optional, 'pending', 'in-progress', 'completed')
+    //   - createdAt: timestamp (required, immutable)
+    //   - updatedAt: timestamp (required)
+    //
+    // Collection: designers
+    // Document ID: {designerId}
+    // Fields:
+    //   - name: string (required, max 100 chars)
+    //   - ownerId: string (required, immutable, must match auth.uid)
+    //   - createdAt: timestamp (required, immutable)
+    //
+    // Collection: tasks
+    // Document ID: {taskId}
+    // Fields:
+    //   - projectId: string (required, immutable)
+    //   - title: string (required, max 100 chars)
+    //   - description: string (optional, max 1000 chars)
+    //   - startDate: timestamp (required)
+    //   - endDate: timestamp (required)
+    //   - status: string (required, 'pending', 'in-progress', 'completed')
+    //   - createdAt: timestamp (required, immutable)
+    //   - updatedAt: timestamp (required)
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.ownerId;
+    }
+
+    function uidUnchanged() {
+      return !('ownerId' in request.resource.data) || request.resource.data.ownerId == request.auth.uid;
+    }
+
+    function uidNotModified() {
+      return !('ownerId' in request.resource.data) || request.resource.data.ownerId == resource.data.ownerId;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function validStringLength(field, minLen, maxLen) {
+      return request.resource.data[field] is string &&
+        request.resource.data[field].size() >= minLen &&
+        request.resource.data[field].size() <= maxLen;
+    }
+
+    function isValidOptionalString(field, minLen, maxLen) {
+      return !(field in request.resource.data) ||
+             (request.resource.data[field] is string &&
+              request.resource.data[field].size() >= minLen &&
+              request.resource.data[field].size() <= maxLen);
+    }
+
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "schimidtz0420@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+    function isValidUser() {
+      return hasOnlyAllowedFields(['email', 'name', 'role', 'createdAt']) &&
+             validStringLength('email', 3, 100) &&
+             validStringLength('name', 1, 100) &&
+             request.resource.data.role in ['admin', 'user'] &&
+             request.resource.data.createdAt is timestamp;
+    }
+
+    function isValidProject() {
+      return hasOnlyAllowedFields(['name', 'address', 'contact', 'houseType', 'designer', 'startDate', 'ownerId', 'status', 'isShared', 'createdAt', 'updatedAt']) &&
+             validStringLength('name', 1, 100) &&
+             validStringLength('address', 1, 200) &&
+             validStringLength('contact', 1, 100) &&
+             validStringLength('houseType', 1, 100) &&
+             isValidOptionalString('designer', 0, 100) &&
+             request.resource.data.startDate is timestamp &&
+             request.resource.data.ownerId is string &&
+             (!('status' in request.resource.data) || request.resource.data.status in ['pending', 'in-progress', 'completed']) &&
+             (!('isShared' in request.resource.data) || request.resource.data.isShared is bool) &&
+             request.resource.data.createdAt is timestamp &&
+             request.resource.data.updatedAt is timestamp;
+    }
+
+    function isValidTask() {
+      return hasOnlyAllowedFields(['projectId', 'title', 'description', 'startDate', 'endDate', 'status', 'subtasks', 'color', 'reminderTiming', 'reminderEmails', 'reminderPhone', 'createdAt', 'updatedAt']) &&
+             request.resource.data.projectId is string &&
+             validStringLength('title', 1, 100) &&
+             isValidOptionalString('description', 0, 1000) &&
+             isValidOptionalString('color', 0, 50) &&
+             (!('reminderTiming' in request.resource.data) || request.resource.data.reminderTiming in ['none', 'at_event', '1_hour', '1_day', '1_week']) &&
+             (!('reminderEmails' in request.resource.data) || (request.resource.data.reminderEmails is list && request.resource.data.reminderEmails.size() <= 20)) &&
+             isValidOptionalString('reminderPhone', 0, 20) &&
+             request.resource.data.startDate is timestamp &&
+             request.resource.data.endDate is timestamp &&
+             request.resource.data.status in ['pending', 'in-progress', 'completed'] &&
+             (!('subtasks' in request.resource.data) || (request.resource.data.subtasks is list && request.resource.data.subtasks.size() <= 100)) &&
+             request.resource.data.createdAt is timestamp &&
+             request.resource.data.updatedAt is timestamp;
+    }
+
+    function isValidDesigner() {
+      return hasOnlyAllowedFields(['name', 'ownerId', 'createdAt']) &&
+             validStringLength('name', 1, 100) &&
+             request.resource.data.ownerId is string &&
+             request.resource.data.createdAt is timestamp;
+    }
+
+    // Check if the user owns the project this task belongs to
+    function ownsProject(projectId) {
+      return get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && isValidUser() && 
+                    ((isOwner(userId) && request.resource.data.role == 'user') || isAdmin());
+      allow update: if isAuthenticated() && isValidUser() && 
+                    ((isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin()) &&
+                    areImmutableFieldsUnchanged(['createdAt']);
+      allow delete: if isAdmin();
+    }
+
+    match /projects/{projectId} {
+      allow get: if isDocOwner() || isAdmin() || resource.data.isShared == true;
+      allow list: if isDocOwner() || isAdmin();
+      allow create: if isAuthenticated() && isValidProject() && uidUnchanged();
+      allow update: if isAuthenticated() && isValidProject() && isDocOwner() && uidNotModified() &&
+                    areImmutableFieldsUnchanged(['createdAt', 'ownerId']);
+      allow delete: if isDocOwner() || isAdmin();
+    }
+
+    match /designers/{designerId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && isValidDesigner() && uidUnchanged();
+      allow update: if isAuthenticated() && isValidDesigner() && isDocOwner() && uidNotModified() &&
+                    areImmutableFieldsUnchanged(['createdAt', 'ownerId']);
+      allow delete: if isDocOwner() || isAdmin();
+    }
+
+    match /tasks/{taskId} {
+      allow read: if (isAuthenticated() && (ownsProject(resource.data.projectId) || isAdmin())) || 
+                  get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.isShared == true;
+      allow create: if isAuthenticated() && isValidTask() && ownsProject(request.resource.data.projectId);
+      allow update: if isAuthenticated() && isValidTask() && ownsProject(resource.data.projectId) &&
+                    areImmutableFieldsUnchanged(['createdAt', 'projectId']);
+      allow delete: if isAuthenticated() && (ownsProject(resource.data.projectId) || isAdmin());
+    }
+  }
+}
