@@ -1,12 +1,12 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { onAuthStateChanged, User, signInWithPopup, signOut as firebaseSignOut } from 'firebase/auth';
+import { onAuthStateChanged, User, signInWithPopup, signInWithRedirect, getRedirectResult, signOut as firebaseSignOut } from 'firebase/auth';
 import { auth, googleProvider, db, handleFirestoreError, OperationType } from '../firebase';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  signIn: () => Promise<void>;
+  signIn: (method?: 'popup' | 'redirect') => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -35,21 +35,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             });
           }
         } catch (error) {
-          handleFirestoreError(error, OperationType.GET, `users/${currentUser.uid}`);
+          console.error("Error checking user document:", error);
+          // Don't throw here, just log it so loading can finish
         }
       }
       
       setLoading(false);
     });
 
+    // Check for redirect result
+    getRedirectResult(auth).catch((error) => {
+      console.error("Error getting redirect result:", error);
+    });
+
     return unsubscribe;
   }, []);
 
-  const signIn = async () => {
+  const signIn = async (method: 'popup' | 'redirect' = 'popup') => {
     try {
-      await signInWithPopup(auth, googleProvider);
+      if (method === 'redirect') {
+        await signInWithRedirect(auth, googleProvider);
+      } else {
+        await signInWithPopup(auth, googleProvider);
+      }
     } catch (error: any) {
-      console.error("Error signing in with Google", error);
+      console.error(`Error signing in with Google (${method})`, error);
       throw error;
     }
   };

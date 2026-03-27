@@ -109,9 +109,17 @@
           "type": "string",
           "format": "date-time"
         },
+        "startTime": {
+          "type": "string",
+          "description": "Optional start time (HH:mm)"
+        },
         "endDate": {
           "type": "string",
           "format": "date-time"
+        },
+        "endTime": {
+          "type": "string",
+          "description": "Optional end time (HH:mm)"
         },
         "status": {
           "type": "string",
@@ -139,7 +147,8 @@
               "id": { "type": "string" },
               "title": { "type": "string" },
               "completed": { "type": "boolean" },
-              "dueDate": { "type": "string" }
+              "dueDate": { "type": "string" },
+              "dueTime": { "type": "string", "description": "Optional due time (HH:mm)" }
             }
           }
         },

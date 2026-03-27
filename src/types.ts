@@ -25,6 +25,7 @@ export interface Subtask {
   title: string;
   completed: boolean;
   dueDate?: string;
+  dueTime?: string;
 }
 
 export interface Task {
@@ -33,7 +34,9 @@ export interface Task {
   title: string;
   description?: string;
   startDate: string | any; // ISO string or Timestamp
+  startTime?: string;
   endDate: string | any; // ISO string or Timestamp
+  endTime?: string;
   status: 'pending' | 'in-progress' | 'completed';
   subtasks?: Subtask[];
   color?: string;

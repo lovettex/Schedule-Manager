@@ -53,13 +53,16 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
     title: '',
     description: '',
     startDate: format(new Date(), 'yyyy-MM-dd'),
+    startTime: '',
     endDate: format(new Date(), 'yyyy-MM-dd'),
+    endTime: '',
     status: 'pending' as 'pending' | 'in-progress' | 'completed',
     subtasks: [] as Subtask[],
     color: ''
   });
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
   const [newSubtaskDueDate, setNewSubtaskDueDate] = useState('');
+  const [newSubtaskDueTime, setNewSubtaskDueTime] = useState('');
 
   // Drag to resize state
   const [dragState, setDragState] = useState<{
@@ -175,6 +178,10 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
         endDate: new Date(taskForm.endDate + 'T00:00:00'),
       };
 
+      // Remove empty time fields
+      if (!taskDataToSave.startTime) delete (taskDataToSave as any).startTime;
+      if (!taskDataToSave.endTime) delete (taskDataToSave as any).endTime;
+
       if (editingTask) {
         const taskRef = doc(db, 'tasks', editingTask.id);
         await updateDoc(taskRef, {
@@ -195,14 +202,16 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
     }
   };
 
+  const [taskToDelete, setTaskToDelete] = useState<string | null>(null);
+
   const handleDeleteTask = async (taskId: string) => {
     if (readOnly) return;
-    if (window.confirm('Are you sure you want to delete this task?')) {
-      try {
-        await deleteDoc(doc(db, 'tasks', taskId));
-      } catch (error) {
-        handleFirestoreError(error, OperationType.DELETE, `tasks/${taskId}`);
-      }
+    try {
+      await deleteDoc(doc(db, 'tasks', taskId));
+      closeTaskForm();
+      setTaskToDelete(null);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `tasks/${taskId}`);
     }
   };
 
@@ -267,6 +276,9 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
     if (newSubtaskDueDate) {
       newSubtask.dueDate = newSubtaskDueDate;
     }
+    if (newSubtaskDueTime) {
+      newSubtask.dueTime = newSubtaskDueTime;
+    }
 
     setTaskForm(prev => ({
       ...prev,
@@ -315,7 +327,9 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
       title: task.title,
       description: task.description || '',
       startDate: format(task.startDate.toDate ? task.startDate.toDate() : new Date(task.startDate), 'yyyy-MM-dd'),
+      startTime: task.startTime || '',
       endDate: format(task.endDate.toDate ? task.endDate.toDate() : new Date(task.endDate), 'yyyy-MM-dd'),
+      endTime: task.endTime || '',
       status: task.status,
       subtasks: task.subtasks || [],
       color: task.color || ''
@@ -330,13 +344,16 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
       title: '',
       description: '',
       startDate: format(new Date(), 'yyyy-MM-dd'),
+      startTime: '',
       endDate: format(new Date(), 'yyyy-MM-dd'),
+      endTime: '',
       status: 'pending',
       subtasks: [],
       color: ''
     });
     setNewSubtaskTitle('');
     setNewSubtaskDueDate('');
+    setNewSubtaskDueTime('');
   };
 
   const handleMouseDownResize = (e: React.MouseEvent, taskId: string, edge: 'start' | 'end') => {
@@ -863,26 +880,44 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
                       placeholder="Add more details..."
                     />
                   </div>
-                  <div className="grid grid-cols-2 gap-3 sm:gap-4">
-                    <div>
-                      <label className="block text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 sm:mb-2 ml-1">Start Date</label>
-                      <input
-                        type="date"
-                        required
-                        value={taskForm.startDate}
-                        onChange={(e) => setTaskForm({ ...taskForm, startDate: e.target.value })}
-                        className="glass-input block w-full rounded-xl py-2.5 sm:py-3 px-3.5 sm:px-4 text-base sm:text-sm outline-none"
-                      />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5">
+                    <div className="space-y-2">
+                      <label className="block text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 sm:mb-2 ml-1">Start Date & Time (Optional Time)</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="date"
+                          required
+                          value={taskForm.startDate}
+                          onChange={(e) => setTaskForm({ ...taskForm, startDate: e.target.value })}
+                          className="glass-input block flex-[2.2] min-w-0 rounded-xl py-2.5 sm:py-3 px-3.5 sm:px-4 text-base sm:text-sm outline-none border-[#e15252]"
+                        />
+                        <input
+                          type="time"
+                          value={taskForm.startTime}
+                          onChange={(e) => setTaskForm({ ...taskForm, startTime: e.target.value })}
+                          title="Time (Optional)"
+                          className="glass-input block flex-1 min-w-[90px] rounded-xl py-2.5 sm:py-3 px-2 sm:px-3 text-base sm:text-sm outline-none"
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <label className="block text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 sm:mb-2 ml-1">End Date</label>
-                      <input
-                        type="date"
-                        required
-                        value={taskForm.endDate}
-                        onChange={(e) => setTaskForm({ ...taskForm, endDate: e.target.value })}
-                        className="glass-input block w-full rounded-xl py-2.5 sm:py-3 px-3.5 sm:px-4 text-base sm:text-sm outline-none"
-                      />
+                    <div className="space-y-2">
+                      <label className="block text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 sm:mb-2 ml-1">End Date & Time (Optional Time)</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="date"
+                          required
+                          value={taskForm.endDate}
+                          onChange={(e) => setTaskForm({ ...taskForm, endDate: e.target.value })}
+                          className="glass-input block flex-[2.2] min-w-0 rounded-xl py-2.5 sm:py-3 px-3.5 sm:px-4 text-base sm:text-sm outline-none"
+                        />
+                        <input
+                          type="time"
+                          value={taskForm.endTime}
+                          onChange={(e) => setTaskForm({ ...taskForm, endTime: e.target.value })}
+                          title="Time (Optional)"
+                          className="glass-input block flex-1 min-w-[90px] rounded-xl py-2.5 sm:py-3 px-2 sm:px-3 text-base sm:text-sm outline-none"
+                        />
+                      </div>
                     </div>
                   </div>
                   <div>
@@ -938,9 +973,10 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
                             <span className={clsx("ml-3 text-xs font-bold truncate", subtask.completed ? "line-through text-slate-400" : "text-slate-700")}>
                               {subtask.title}
                             </span>
-                            {subtask.dueDate && (
-                              <span className="ml-2 text-[10px] font-black text-slate-400 bg-white/30 px-1.5 py-0.5 rounded-lg">
-                                {subtask.dueDate}
+                            {(subtask.dueDate || subtask.dueTime) && (
+                              <span className="ml-2 text-[10px] font-black text-slate-400 bg-white/30 px-1.5 py-0.5 rounded-lg flex items-center gap-1">
+                                {subtask.dueDate && <span>{subtask.dueDate}</span>}
+                                {subtask.dueTime && <span className="text-indigo-500">{subtask.dueTime}</span>}
                               </span>
                             )}
                           </div>
@@ -957,26 +993,35 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
                       ))}
                     </div>
                     {!readOnly && (
-                      <div className="flex flex-col sm:flex-row gap-2">
+                      <div className="flex flex-col gap-2">
                         <input
                           type="text"
                           value={newSubtaskTitle}
                           onChange={(e) => setNewSubtaskTitle(e.target.value)}
                           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddSubtask(); } }}
                           placeholder="Add a subtask..."
-                          className="flex-1 glass-input rounded-xl py-2.5 px-3.5 sm:px-3 text-base sm:text-sm outline-none"
+                          className="w-full glass-input rounded-xl py-2.5 px-3.5 sm:px-3 text-base sm:text-sm outline-none"
                         />
-                        <div className="flex gap-2">
-                          <input
-                            type="date"
-                            value={newSubtaskDueDate}
-                            onChange={(e) => setNewSubtaskDueDate(e.target.value)}
-                            className="flex-1 sm:w-32 glass-input rounded-xl py-2.5 px-3.5 sm:px-3 text-base sm:text-sm outline-none"
-                          />
+                        <div className="flex flex-wrap gap-2">
+                          <div className="flex-1 flex items-center gap-2">
+                            <input
+                              type="date"
+                              value={newSubtaskDueDate}
+                              onChange={(e) => setNewSubtaskDueDate(e.target.value)}
+                              className="flex-[2.2] min-w-0 glass-input rounded-xl py-2.5 px-3.5 sm:px-3 text-base sm:text-sm outline-none"
+                            />
+                            <input
+                              type="time"
+                              value={newSubtaskDueTime}
+                              onChange={(e) => setNewSubtaskDueTime(e.target.value)}
+                              title="Time (Optional)"
+                              className="flex-1 min-w-[90px] glass-input rounded-xl py-2.5 px-2 sm:px-3 text-base sm:text-sm outline-none"
+                            />
+                          </div>
                           <button
                             type="button"
                             onClick={handleAddSubtask}
-                            className="px-4 py-2 rounded-xl text-xs font-black text-white bg-slate-600 hover:bg-slate-700 transition-all active:scale-95"
+                            className="px-6 py-2 rounded-xl text-xs font-black text-white bg-slate-600 hover:bg-slate-700 transition-all active:scale-95"
                           >
                             Add
                           </button>
@@ -988,23 +1033,36 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
               </form>
             </div>
             
-            <div className="px-5 sm:px-8 py-4 sm:py-6 border-t border-white/10 bg-white/5 backdrop-blur-md flex justify-end space-x-3">
-              <button
-                type="button"
-                onClick={closeTaskForm}
-                className="px-5 py-2.5 rounded-xl text-sm font-bold text-slate-600 hover:bg-white/20 transition-all active:scale-95"
-              >
-                Cancel
-              </button>
-              {!readOnly && (
+            <div className="px-5 sm:px-8 py-4 sm:py-6 border-t border-white/10 bg-white/5 backdrop-blur-md flex justify-between items-center">
+              <div>
+                {editingTask && !readOnly && (
+                  <button
+                    type="button"
+                    onClick={() => setTaskToDelete(editingTask.id)}
+                    className="px-5 py-2.5 rounded-xl text-sm font-bold text-rose-500 hover:bg-rose-500/10 transition-all active:scale-95"
+                  >
+                    Delete Task
+                  </button>
+                )}
+              </div>
+              <div className="flex space-x-3">
                 <button
-                  type="submit"
-                  form="task-form"
-                  className="px-5 py-2.5 rounded-xl text-sm font-bold text-white bg-indigo-600/80 hover:bg-indigo-700/80 shadow-lg shadow-indigo-200/50 transition-all active:scale-95 backdrop-blur-sm"
+                  type="button"
+                  onClick={closeTaskForm}
+                  className="px-5 py-2.5 rounded-xl text-sm font-bold text-slate-600 hover:bg-white/20 transition-all active:scale-95"
                 >
-                  {editingTask ? 'Update Task' : 'Create Task'}
+                  Cancel
                 </button>
-              )}
+                {!readOnly && (
+                  <button
+                    type="submit"
+                    form="task-form"
+                    className="px-5 py-2.5 rounded-xl text-sm font-bold text-white bg-indigo-600/80 hover:bg-indigo-700/80 shadow-lg shadow-indigo-200/50 transition-all active:scale-95 backdrop-blur-sm"
+                  >
+                    {editingTask ? 'Update Task' : 'Create Task'}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -1043,7 +1101,14 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
                       </div>
                       <p className="text-sm text-slate-500 mb-4 line-clamp-2">{task.description}</p>
                       <div className="flex flex-wrap items-center gap-4 text-xs font-bold text-slate-400">
-                        <span className="flex items-center"><CalendarIcon className="w-3.5 h-3.5 mr-1.5" /> {format(task.startDate.toDate ? task.startDate.toDate() : new Date(task.startDate), 'MMM d')} - {format(task.endDate.toDate ? task.endDate.toDate() : new Date(task.endDate), 'MMM d, yyyy')}</span>
+                        <span className="flex items-center">
+                          <CalendarIcon className="w-3.5 h-3.5 mr-1.5" /> 
+                          {format(task.startDate.toDate ? task.startDate.toDate() : new Date(task.startDate), 'MMM d')} 
+                          {task.startTime && <span className="ml-1 text-indigo-500/70">({task.startTime})</span>}
+                          <span className="mx-1">-</span>
+                          {format(task.endDate.toDate ? task.endDate.toDate() : new Date(task.endDate), 'MMM d, yyyy')}
+                          {task.endTime && <span className="ml-1 text-indigo-500/70">({task.endTime})</span>}
+                        </span>
                         <span className="flex items-center"><CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> {task.subtasks?.length || 0} Subtasks</span>
                       </div>
                     </div>
@@ -1058,7 +1123,7 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
                             <Edit2 className="h-4 w-4" />
                           </button>
                           <button
-                            onClick={() => handleDeleteTask(task.id)}
+                            onClick={() => setTaskToDelete(task.id)}
                             className="p-2.5 rounded-xl glass hover:bg-white/20 text-slate-400 hover:text-rose-600 transition-all shadow-sm"
                           >
                             <Trash2 className="h-4 w-4" />
@@ -1103,10 +1168,11 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
                                 )}>
                                   {subtask.title}
                                 </span>
-                                {subtask.dueDate && (
-                                  <span className="inline-flex items-center text-[10px] font-black text-slate-500 bg-white/40 px-2 py-0.5 rounded-lg uppercase tracking-wider w-fit">
-                                    <CalendarIcon className="w-3 h-3 mr-1.5 opacity-70" />
-                                    {subtask.dueDate}
+                                {(subtask.dueDate || subtask.dueTime) && (
+                                  <span className="inline-flex items-center text-[10px] font-black text-slate-500 bg-white/40 px-2 py-0.5 rounded-lg uppercase tracking-wider w-fit gap-1">
+                                    <CalendarIcon className="w-3 h-3 mr-0.5 opacity-70" />
+                                    {subtask.dueDate && <span>{subtask.dueDate}</span>}
+                                    {subtask.dueTime && <span className="text-indigo-500">{subtask.dueTime}</span>}
                                   </span>
                                 )}
                               </div>
@@ -1123,6 +1189,34 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {taskToDelete && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="glass-card p-8 rounded-3xl max-w-sm w-full shadow-2xl border border-white/20 animate-in zoom-in-95 duration-300">
+            <div className="bg-rose-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6">
+              <Trash2 className="h-8 w-8 text-rose-500" />
+            </div>
+            <h3 className="text-xl font-bold text-slate-900 text-center mb-2">Delete Task?</h3>
+            <p className="text-slate-500 text-center mb-8 text-sm leading-relaxed">
+              Are you sure you want to delete this task? This action cannot be undone and it will be removed from your calendar.
+            </p>
+            <div className="flex space-x-3">
+              <button
+                onClick={() => setTaskToDelete(null)}
+                className="flex-1 px-5 py-3 rounded-2xl text-sm font-bold text-slate-600 hover:bg-slate-100 transition-all active:scale-95"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDeleteTask(taskToDelete)}
+                className="flex-1 px-5 py-3 rounded-2xl text-sm font-bold text-white bg-rose-500 hover:bg-rose-600 shadow-lg shadow-rose-200 transition-all active:scale-95"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

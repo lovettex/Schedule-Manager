@@ -40,7 +40,9 @@ service cloud.firestore {
     //   - title: string (required, max 100 chars)
     //   - description: string (optional, max 1000 chars)
     //   - startDate: timestamp (required)
+    //   - startTime: string (optional, HH:mm)
     //   - endDate: timestamp (required)
+    //   - endTime: string (optional, HH:mm)
     //   - status: string (required, 'pending', 'in-progress', 'completed')
     //   - createdAt: timestamp (required, immutable)
     //   - updatedAt: timestamp (required)
@@ -127,11 +129,13 @@ service cloud.firestore {
     }
 
     function isValidTask() {
-      return hasOnlyAllowedFields(['projectId', 'title', 'description', 'startDate', 'endDate', 'status', 'subtasks', 'color', 'reminderTiming', 'reminderEmails', 'reminderPhone', 'createdAt', 'updatedAt']) &&
+      return hasOnlyAllowedFields(['projectId', 'title', 'description', 'startDate', 'startTime', 'endDate', 'endTime', 'status', 'subtasks', 'color', 'reminderTiming', 'reminderEmails', 'reminderPhone', 'createdAt', 'updatedAt']) &&
              request.resource.data.projectId is string &&
              validStringLength('title', 1, 100) &&
              isValidOptionalString('description', 0, 1000) &&
              isValidOptionalString('color', 0, 50) &&
+             isValidOptionalString('startTime', 0, 10) &&
+             isValidOptionalString('endTime', 0, 10) &&
              (!('reminderTiming' in request.resource.data) || request.resource.data.reminderTiming in ['none', 'at_event', '1_hour', '1_day', '1_week']) &&
              (!('reminderEmails' in request.resource.data) || (request.resource.data.reminderEmails is list && request.resource.data.reminderEmails.size() <= 20)) &&
              isValidOptionalString('reminderPhone', 0, 20) &&
@@ -152,7 +156,15 @@ service cloud.firestore {
 
     // Check if the user owns the project this task belongs to
     function ownsProject(projectId) {
-      return get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid;
+      return (projectId == "personal_" + request.auth.uid) ||
+             (exists(/databases/$(database)/documents/projects/$(projectId)) && 
+              get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid);
+    }
+
+    // Check if a project is shared
+    function isProjectShared(projectId) {
+      return exists(/databases/$(database)/documents/projects/$(projectId)) && 
+             get(/databases/$(database)/documents/projects/$(projectId)).data.isShared == true;
     }
 
     // ===============================================================
@@ -169,7 +181,7 @@ service cloud.firestore {
     }
 
     match /projects/{projectId} {
-      allow get: if isDocOwner() || isAdmin() || resource.data.isShared == true;
+      allow get: if isDocOwner() || isAdmin() || (exists(/databases/$(database)/documents/projects/$(projectId)) && resource.data.isShared == true);
       allow list: if isDocOwner() || isAdmin();
       allow create: if isAuthenticated() && isValidProject() && uidUnchanged();
       allow update: if isAuthenticated() && isValidProject() && isDocOwner() && uidNotModified() &&
@@ -187,7 +199,7 @@ service cloud.firestore {
 
     match /tasks/{taskId} {
       allow read: if (isAuthenticated() && (ownsProject(resource.data.projectId) || isAdmin())) || 
-                  get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.isShared == true;
+                  isProjectShared(resource.data.projectId);
       allow create: if isAuthenticated() && isValidTask() && ownsProject(request.resource.data.projectId);
       allow update: if isAuthenticated() && isValidTask() && ownsProject(resource.data.projectId) &&
                     areImmutableFieldsUnchanged(['createdAt', 'projectId']);
