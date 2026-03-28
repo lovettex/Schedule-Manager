@@ -17,30 +17,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
+      setLoading(false);
       
       if (currentUser) {
-        // Ensure user document exists
-        try {
-          const userRef = doc(db, 'users', currentUser.uid);
-          const userSnap = await getDoc(userRef);
-          
-          if (!userSnap.exists()) {
-            await setDoc(userRef, {
-              email: currentUser.email,
-              name: currentUser.displayName || 'Unknown User',
-              role: 'user',
-              createdAt: serverTimestamp()
-            });
+        // Ensure user document exists in background
+        const checkUserDoc = async () => {
+          try {
+            const userRef = doc(db, 'users', currentUser.uid);
+            const userSnap = await getDoc(userRef);
+            
+            if (!userSnap.exists()) {
+              await setDoc(userRef, {
+                email: currentUser.email,
+                name: currentUser.displayName || 'Unknown User',
+                role: 'user',
+                createdAt: serverTimestamp()
+              });
+            }
+          } catch (error) {
+            console.error("Error checking user document:", error);
           }
-        } catch (error) {
-          console.error("Error checking user document:", error);
-          // Don't throw here, just log it so loading can finish
-        }
+        };
+        checkUserDoc();
       }
-      
-      setLoading(false);
     });
 
     // Check for redirect result
