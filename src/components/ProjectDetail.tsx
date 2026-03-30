@@ -202,91 +202,6 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
     }
   };
 
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncStatus, setSyncStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
-
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'GOOGLE_AUTH_SUCCESS') {
-        performSync();
-      }
-    };
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, [tasks]);
-
-  const handleGoogleSync = async () => {
-    try {
-      setIsSyncing(true);
-      setSyncStatus(null);
-      
-      const response = await fetch('/api/auth/google/url');
-      if (!response.ok) throw new Error('Failed to get auth URL');
-      const { url } = await response.json();
-
-      const authWindow = window.open(url, 'google_auth_popup', 'width=600,height=700');
-      if (!authWindow) {
-        alert('Please allow popups to sync with Google Calendar.');
-        setIsSyncing(false);
-      }
-    } catch (error) {
-      console.error('Sync error:', error);
-      setSyncStatus({ type: 'error', message: 'Failed to initiate sync.' });
-      setIsSyncing(false);
-    }
-  };
-
-  const performSync = async () => {
-    try {
-      setIsSyncing(true);
-      
-      // Prepare tasks for sync
-      const tasksToSync = tasks.map(task => {
-        const start = task.startDate.toDate ? task.startDate.toDate() : new Date(task.startDate);
-        const end = task.endDate.toDate ? task.endDate.toDate() : new Date(task.endDate);
-        
-        // Combine with time if available
-        if (task.startTime) {
-          const [hours, minutes] = task.startTime.split(':');
-          start.setHours(parseInt(hours), parseInt(minutes));
-        }
-        if (task.endTime) {
-          const [hours, minutes] = task.endTime.split(':');
-          end.setHours(parseInt(hours), parseInt(minutes));
-        }
-
-        return {
-          title: task.title,
-          description: task.description,
-          startDate: start.toISOString(),
-          endDate: end.toISOString(),
-        };
-      });
-
-      const response = await fetch('/api/calendar/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tasks: tasksToSync }),
-      });
-
-      if (response.status === 401) {
-        // Session expired or not auth'd, retry auth
-        handleGoogleSync();
-        return;
-      }
-
-      if (!response.ok) throw new Error('Sync failed');
-      
-      setSyncStatus({ type: 'success', message: 'Successfully synced to Google Calendar!' });
-      setTimeout(() => setSyncStatus(null), 5000);
-    } catch (error) {
-      console.error('Sync error:', error);
-      setSyncStatus({ type: 'error', message: 'Failed to sync tasks.' });
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
   const [taskToDelete, setTaskToDelete] = useState<string | null>(null);
 
   const handleDeleteTask = async (taskId: string) => {
@@ -844,16 +759,6 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
         </div>
 
         <div className="flex flex-wrap items-center justify-center w-full sm:w-auto gap-1.5 glass p-1 rounded-2xl shadow-lg border border-white/20">
-          {isPersonal && (
-            <button
-              onClick={handleGoogleSync}
-              disabled={isSyncing}
-              className="flex-1 sm:flex-none inline-flex items-center justify-center px-3 py-1.5 border border-white/20 text-[10px] sm:text-xs font-bold rounded-xl text-slate-700 bg-white/10 hover:bg-white/20 transition-all active:scale-95 uppercase tracking-wider disabled:opacity-50"
-            >
-              <CalendarIcon className="h-3.5 w-3.5 mr-1.5 text-slate-500" />
-              {isSyncing ? 'Syncing...' : 'Sync to Google'}
-            </button>
-          )}
           {!isPersonal && !readOnly && (
             <>
               <div className="flex flex-wrap items-center justify-center gap-1 flex-1 sm:flex-none w-full sm:w-auto">
@@ -1282,18 +1187,6 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
               ))}
             </div>
           )}
-        </div>
-      )}
-
-      {syncStatus && (
-        <div className={clsx(
-          "fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-6 py-3 rounded-2xl shadow-2xl backdrop-blur-xl border animate-in slide-in-from-bottom-4 duration-300",
-          syncStatus.type === 'success' ? "bg-emerald-500/90 border-emerald-400/30 text-white" : "bg-rose-500/90 border-rose-400/30 text-white"
-        )}>
-          <div className="flex items-center space-x-3">
-            {syncStatus.type === 'success' ? <CheckCircle2 className="h-5 w-5" /> : <Bell className="h-5 w-5" />}
-            <span className="text-sm font-bold">{syncStatus.message}</span>
-          </div>
         </div>
       )}
 
