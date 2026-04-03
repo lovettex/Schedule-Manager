@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { doc, getDoc, collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, serverTimestamp, orderBy } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { Project, Task, Subtask } from '../types';
-import { ArrowLeft, Plus, Calendar as CalendarIcon, Clock, CheckCircle, Circle, Trash2, Edit2, X, Bell, FolderOpen, Share2, Copy, ChevronRight, MapPin, Home, User, CheckCircle2, ChevronUp, ChevronDown, Check } from 'lucide-react';
+import { ArrowLeft, Plus, Calendar as CalendarIcon, Clock, CheckCircle, Circle, Trash2, Edit2, X, Bell, FolderOpen, Share2, Copy, ChevronRight, MapPin, Home, User, CheckCircle2, ChevronUp, ChevronDown, Check, ExternalLink } from 'lucide-react';
 import { format, parseISO, startOfWeek, addDays, isSameDay, startOfMonth, endOfMonth, eachDayOfInterval, isBefore, isAfter } from 'date-fns';
 import clsx from 'clsx';
 
@@ -216,6 +216,64 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
   };
 
   const [showShareToast, setShowShareToast] = useState(false);
+  const [isSyncingToNotion, setIsSyncingToNotion] = useState(false);
+
+  const handleNotionSync = async () => {
+    if (readOnly || !project) return;
+    setIsSyncingToNotion(true);
+    
+    try {
+      const sync = async () => {
+        const response = await fetch('/api/notion/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            tasks: tasks.map(t => ({
+              title: t.title,
+              description: t.description,
+              startDate: format(t.startDate.toDate ? t.startDate.toDate() : new Date(t.startDate), 'yyyy-MM-dd'),
+              endDate: format(t.endDate.toDate ? t.endDate.toDate() : new Date(t.endDate), 'yyyy-MM-dd'),
+              status: t.status
+            })),
+            projectName: project.name
+          })
+        });
+
+        if (response.status === 401) {
+          // Not authenticated, open OAuth popup
+          const authUrlResponse = await fetch('/api/auth/notion/url');
+          const { url } = await authUrlResponse.json();
+          
+          const authWindow = window.open(url, 'notion_auth', 'width=600,height=700');
+          
+          const handleMessage = async (event: MessageEvent) => {
+            if (event.data?.type === 'NOTION_AUTH_SUCCESS') {
+              window.removeEventListener('message', handleMessage);
+              // Retry sync
+              await sync();
+            }
+          };
+          window.addEventListener('message', handleMessage);
+          return;
+        }
+
+        const result = await response.json();
+        if (result.success) {
+          alert(`Successfully synced to Notion! You can view it here: ${result.databaseUrl}`);
+          window.open(result.databaseUrl, '_blank');
+        } else {
+          throw new Error(result.error || 'Failed to sync');
+        }
+      };
+
+      await sync();
+    } catch (err) {
+      console.error('Notion sync error:', err);
+      alert(err instanceof Error ? err.message : 'Failed to sync to Notion');
+    } finally {
+      setIsSyncingToNotion(false);
+    }
+  };
 
   const handleShare = async () => {
     if (readOnly || !project) return;
@@ -790,6 +848,16 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
                 <Share2 className="h-3.5 w-3.5 mr-1.5 text-slate-500" />
                 Share
               </button>
+              {isPersonal && (
+                <button
+                  onClick={handleNotionSync}
+                  disabled={isSyncingToNotion}
+                  className="flex-1 sm:flex-none inline-flex items-center justify-center px-3 py-1.5 border border-white/20 text-[10px] sm:text-xs font-bold rounded-xl text-white bg-indigo-600/80 hover:bg-indigo-700/80 transition-all active:scale-95 uppercase tracking-wider disabled:opacity-50"
+                >
+                  <ExternalLink className={clsx("h-3.5 w-3.5 mr-1.5", isSyncingToNotion && "animate-spin")} />
+                  {isSyncingToNotion ? 'Syncing...' : 'Sync to Notion'}
+                </button>
+              )}
             </>
           )}
           {!isPersonal && readOnly && (
