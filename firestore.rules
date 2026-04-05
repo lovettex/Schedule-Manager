@@ -37,6 +37,7 @@ service cloud.firestore {
     // Document ID: {taskId}
     // Fields:
     //   - projectId: string (required, immutable)
+    //   - ownerId: string (required, immutable)
     //   - title: string (required, max 100 chars)
     //   - description: string (optional, max 1000 chars)
     //   - startDate: timestamp (required)
@@ -46,6 +47,26 @@ service cloud.firestore {
     //   - status: string (required, 'pending', 'in-progress', 'completed')
     //   - createdAt: timestamp (required, immutable)
     //   - updatedAt: timestamp (required)
+    //
+    // Collection: calendar_shares
+    // Document ID: {ownerId}_{sharedWithEmail}
+    // Fields:
+    //   - ownerId: string (required, immutable)
+    //   - ownerEmail: string (required)
+    //   - ownerName: string (required)
+    //   - sharedWithEmail: string (required, immutable)
+    //   - createdAt: timestamp (required, immutable)
+    //
+    // Collection: notifications
+    // Document ID: {notificationId}
+    // Fields:
+    //   - recipientEmail: string (required, immutable)
+    //   - senderId: string (required, immutable)
+    //   - senderName: string (required)
+    //   - type: string (required, 'calendar_share')
+    //   - message: string (required)
+    //   - read: boolean (required)
+    //   - createdAt: timestamp (required, immutable)
     // ===============================================================
 
     // ===============================================================
@@ -69,6 +90,11 @@ service cloud.firestore {
 
     function uidNotModified() {
       return !('ownerId' in request.resource.data) || request.resource.data.ownerId == resource.data.ownerId;
+    }
+
+    function hasCalendarAccess(ownerId) {
+      return isAuthenticated() && 
+             (ownerId != null && exists(/databases/$(database)/documents/calendar_shares/$(ownerId + "_" + request.auth.token.email)));
     }
 
     function hasRequiredFields(fields) {
@@ -129,8 +155,9 @@ service cloud.firestore {
     }
 
     function isValidTask() {
-      return hasOnlyAllowedFields(['projectId', 'title', 'description', 'startDate', 'startTime', 'endDate', 'endTime', 'status', 'subtasks', 'color', 'reminderTiming', 'reminderEmails', 'reminderPhone', 'createdAt', 'updatedAt']) &&
+      return hasOnlyAllowedFields(['projectId', 'ownerId', 'title', 'description', 'startDate', 'startTime', 'endDate', 'endTime', 'status', 'subtasks', 'color', 'reminderTiming', 'reminderEmails', 'reminderPhone', 'createdAt', 'updatedAt']) &&
              request.resource.data.projectId is string &&
+             request.resource.data.ownerId is string &&
              validStringLength('title', 1, 100) &&
              isValidOptionalString('description', 0, 1000) &&
              isValidOptionalString('color', 0, 50) &&
@@ -145,6 +172,26 @@ service cloud.firestore {
              (!('subtasks' in request.resource.data) || (request.resource.data.subtasks is list && request.resource.data.subtasks.size() <= 100)) &&
              request.resource.data.createdAt is timestamp &&
              request.resource.data.updatedAt is timestamp;
+    }
+
+    function isValidCalendarShare() {
+      return hasOnlyAllowedFields(['ownerId', 'ownerEmail', 'ownerName', 'sharedWithEmail', 'createdAt']) &&
+             request.resource.data.ownerId is string &&
+             validStringLength('ownerEmail', 3, 100) &&
+             validStringLength('ownerName', 1, 100) &&
+             validStringLength('sharedWithEmail', 3, 100) &&
+             request.resource.data.createdAt is timestamp;
+    }
+
+    function isValidNotification() {
+      return hasOnlyAllowedFields(['recipientEmail', 'senderId', 'senderName', 'type', 'message', 'read', 'createdAt']) &&
+             validStringLength('recipientEmail', 3, 100) &&
+             request.resource.data.senderId is string &&
+             validStringLength('senderName', 1, 100) &&
+             request.resource.data.type is string &&
+             validStringLength('message', 1, 500) &&
+             request.resource.data.read is bool &&
+             request.resource.data.createdAt is timestamp;
     }
 
     function isValidDesigner() {
@@ -198,12 +245,28 @@ service cloud.firestore {
     }
 
     match /tasks/{taskId} {
-      allow read: if (isAuthenticated() && (ownsProject(resource.data.projectId) || isAdmin())) || 
+      allow read: if (isAuthenticated() && (resource.data.ownerId == request.auth.uid || ownsProject(resource.data.projectId) || isAdmin() || hasCalendarAccess(resource.data.ownerId))) || 
                   isProjectShared(resource.data.projectId);
       allow create: if isAuthenticated() && isValidTask() && ownsProject(request.resource.data.projectId);
       allow update: if isAuthenticated() && isValidTask() && ownsProject(resource.data.projectId) &&
-                    areImmutableFieldsUnchanged(['createdAt', 'projectId']);
+                    areImmutableFieldsUnchanged(['createdAt', 'projectId', 'ownerId']);
       allow delete: if isAuthenticated() && (ownsProject(resource.data.projectId) || isAdmin());
+    }
+
+    match /calendar_shares/{shareId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.ownerId) || request.auth.token.email == resource.data.sharedWithEmail);
+      allow create: if isAuthenticated() && isValidCalendarShare() && isOwner(request.resource.data.ownerId);
+      allow update: if false;
+      allow delete: if isAuthenticated() && isOwner(resource.data.ownerId);
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && request.auth.token.email == resource.data.recipientEmail;
+      allow create: if isAuthenticated() && isValidNotification() && request.auth.uid == request.resource.data.senderId;
+      allow update: if isAuthenticated() && request.auth.token.email == resource.data.recipientEmail && 
+                    hasOnlyAllowedFields(['recipientEmail', 'senderId', 'senderName', 'type', 'message', 'read', 'createdAt']) &&
+                    areImmutableFieldsUnchanged(['recipientEmail', 'senderId', 'senderName', 'type', 'message', 'createdAt']);
+      allow delete: if isAuthenticated() && request.auth.token.email == resource.data.recipientEmail;
     }
   }
 }

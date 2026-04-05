@@ -99,6 +99,10 @@
         "projectId": {
           "type": "string"
         },
+        "ownerId": {
+          "type": "string",
+          "description": "The UID of the user who owns this task (for personal tasks, this is the user's UID)"
+        },
         "title": {
           "type": "string"
         },
@@ -161,7 +165,61 @@
           "format": "date-time"
         }
       },
-      "required": ["projectId", "title", "startDate", "endDate", "status", "createdAt", "updatedAt"]
+      "required": ["projectId", "ownerId", "title", "startDate", "endDate", "status", "createdAt", "updatedAt"]
+    },
+    "CalendarShare": {
+      "title": "CalendarShare",
+      "description": "A record of a user sharing their personal calendar with another user.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string"
+        },
+        "ownerEmail": {
+          "type": "string"
+        },
+        "ownerName": {
+          "type": "string"
+        },
+        "sharedWithEmail": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerId", "ownerEmail", "ownerName", "sharedWithEmail", "createdAt"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "A notification for a user.",
+      "type": "object",
+      "properties": {
+        "recipientEmail": {
+          "type": "string"
+        },
+        "senderId": {
+          "type": "string"
+        },
+        "senderName": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "read": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["recipientEmail", "senderId", "senderName", "type", "message", "read", "createdAt"]
     }
   },
   "firestore": {
@@ -188,6 +246,18 @@
         "$ref": "#/entities/Task"
       },
       "description": "Stores tasks for projects."
+    },
+    "/calendar_shares/{shareId}": {
+      "schema": {
+        "$ref": "#/entities/CalendarShare"
+      },
+      "description": "Stores calendar sharing permissions."
+    },
+    "/notifications/{notificationId}": {
+      "schema": {
+        "$ref": "#/entities/Notification"
+      },
+      "description": "Stores user notifications."
     }
   }
 }

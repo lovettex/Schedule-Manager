@@ -2,11 +2,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import { doc, getDoc, collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, serverTimestamp, orderBy } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { Project, Task, Subtask } from '../types';
-import { ArrowLeft, Plus, Calendar as CalendarIcon, Clock, CheckCircle, Circle, Trash2, Edit2, X, Bell, FolderOpen, Share2, Copy, ChevronRight, MapPin, Home, User, CheckCircle2, ChevronUp, ChevronDown, Check, ExternalLink } from 'lucide-react';
+import { ArrowLeft, Plus, Calendar as CalendarIcon, Clock, CheckCircle, Circle, Trash2, Edit2, X, Bell, FolderOpen, Share2, Copy, ChevronRight, MapPin, Home, User, CheckCircle2, ChevronUp, ChevronDown, Check, Lock } from 'lucide-react';
 import { format, parseISO, startOfWeek, addDays, isSameDay, startOfMonth, endOfMonth, eachDayOfInterval, isBefore, isAfter } from 'date-fns';
 import clsx from 'clsx';
 
 import { useAuth } from './AuthProvider';
+import CalendarShareManager from './CalendarShareManager';
 
 const TASK_COLORS = [
   '#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16',
@@ -64,6 +65,9 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
   const [newSubtaskDueDate, setNewSubtaskDueDate] = useState('');
   const [newSubtaskDueTime, setNewSubtaskDueTime] = useState('');
 
+  const ownerId = isPersonal ? projectId.replace('personal_', '') : (project?.ownerId || '');
+  const isActuallyReadOnly = readOnly || (isPersonal && ownerId !== user?.uid);
+
   // Drag to resize state
   const [dragState, setDragState] = useState<{
     taskId: string;
@@ -85,13 +89,14 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
 
   useEffect(() => {
     if (isPersonal && user) {
+      const ownerUid = projectId.replace('personal_', '');
       setProject({
         id: projectId,
-        name: 'Personal Calendar',
+        name: ownerUid === user.uid ? 'Personal Calendar' : 'Shared Personal Calendar',
         address: '',
         contact: '',
         houseType: '',
-        ownerId: user.uid,
+        ownerId: ownerUid,
         startDate: new Date(),
         createdAt: new Date(),
         updatedAt: new Date()
@@ -132,16 +137,33 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
       fetchProject();
     }
 
-    const q = query(
+    let q = query(
       collection(db, 'tasks'),
       where('projectId', '==', projectId),
       orderBy('startDate', 'asc')
     );
 
+    if (isPersonal) {
+      q = query(
+        collection(db, 'tasks'),
+        where('ownerId', '==', ownerId),
+        orderBy('startDate', 'asc')
+      );
+    }
+
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const taskData: Task[] = [];
       snapshot.forEach((doc) => {
-        taskData.push({ id: doc.id, ...doc.data() } as Task);
+        const data = doc.data();
+        if (isPersonal) {
+          // For personal calendars, only include tasks that belong to the personal project
+          // (either the new 'personal_UID' format or the legacy 'personal' format)
+          if (data.projectId === projectId || data.projectId === 'personal') {
+            taskData.push({ id: doc.id, ...data } as Task);
+          }
+        } else {
+          taskData.push({ id: doc.id, ...data } as Task);
+        }
       });
       setTasks(taskData);
       setLoading(false);
@@ -160,7 +182,7 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
 
   const handleSaveTask = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (readOnly) return;
+    if (isActuallyReadOnly) return;
     try {
       // Ensure subtasks don't have undefined values which Firestore rejects
       const cleanSubtasks = taskForm.subtasks.map(st => {
@@ -186,12 +208,14 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
         const taskRef = doc(db, 'tasks', editingTask.id);
         await updateDoc(taskRef, {
           ...taskDataToSave,
+          ownerId: editingTask.ownerId || user?.uid || '',
           updatedAt: serverTimestamp()
         });
       } else {
         await addDoc(collection(db, 'tasks'), {
           ...taskDataToSave,
           projectId,
+          ownerId: user?.uid || '',
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         });
@@ -205,7 +229,7 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
   const [taskToDelete, setTaskToDelete] = useState<string | null>(null);
 
   const handleDeleteTask = async (taskId: string) => {
-    if (readOnly) return;
+    if (isActuallyReadOnly) return;
     try {
       await deleteDoc(doc(db, 'tasks', taskId));
       closeTaskForm();
@@ -216,64 +240,6 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
   };
 
   const [showShareToast, setShowShareToast] = useState(false);
-  const [isSyncingToNotion, setIsSyncingToNotion] = useState(false);
-
-  const handleNotionSync = async () => {
-    if (readOnly || !project) return;
-    setIsSyncingToNotion(true);
-    
-    try {
-      const sync = async () => {
-        const response = await fetch('/api/notion/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            tasks: tasks.map(t => ({
-              title: t.title,
-              description: t.description,
-              startDate: format(t.startDate.toDate ? t.startDate.toDate() : new Date(t.startDate), 'yyyy-MM-dd'),
-              endDate: format(t.endDate.toDate ? t.endDate.toDate() : new Date(t.endDate), 'yyyy-MM-dd'),
-              status: t.status
-            })),
-            projectName: project.name
-          })
-        });
-
-        if (response.status === 401) {
-          // Not authenticated, open OAuth popup
-          const authUrlResponse = await fetch('/api/auth/notion/url');
-          const { url } = await authUrlResponse.json();
-          
-          const authWindow = window.open(url, 'notion_auth', 'width=600,height=700');
-          
-          const handleMessage = async (event: MessageEvent) => {
-            if (event.data?.type === 'NOTION_AUTH_SUCCESS') {
-              window.removeEventListener('message', handleMessage);
-              // Retry sync
-              await sync();
-            }
-          };
-          window.addEventListener('message', handleMessage);
-          return;
-        }
-
-        const result = await response.json();
-        if (result.success) {
-          alert(`Successfully synced to Notion! You can view it here: ${result.databaseUrl}`);
-          window.open(result.databaseUrl, '_blank');
-        } else {
-          throw new Error(result.error || 'Failed to sync');
-        }
-      };
-
-      await sync();
-    } catch (err) {
-      console.error('Notion sync error:', err);
-      alert(err instanceof Error ? err.message : 'Failed to sync to Notion');
-    } finally {
-      setIsSyncingToNotion(false);
-    }
-  };
 
   const handleShare = async () => {
     if (readOnly || !project) return;
@@ -298,7 +264,7 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
   };
 
   const handleStatusChange = async (taskId: string, newStatus: 'pending' | 'in-progress' | 'completed') => {
-    if (readOnly) return;
+    if (isActuallyReadOnly) return;
     try {
       await updateDoc(doc(db, 'tasks', taskId), {
         status: newStatus,
@@ -361,7 +327,7 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
   };
 
   const handleToggleSubtaskDirectly = async (task: Task, subtaskId: string) => {
-    if (readOnly) return;
+    if (isActuallyReadOnly) return;
     const updatedSubtasks = (task.subtasks || []).map(st => {
       const cleanSt = st.id === subtaskId ? { ...st, completed: !st.completed } : { ...st };
       if (cleanSt.dueDate === undefined) {
@@ -415,7 +381,7 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
   };
 
   const handleMouseDownResize = (e: React.MouseEvent, taskId: string, edge: 'start' | 'end') => {
-    if (readOnly) return;
+    if (isActuallyReadOnly) return;
     e.stopPropagation();
     e.preventDefault();
     isDraggingRef.current = true;
@@ -434,7 +400,7 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
   };
 
   const handleTouchStartResize = (e: React.TouchEvent, taskId: string, edge: 'start' | 'end') => {
-    if (readOnly) return;
+    if (isActuallyReadOnly) return;
     e.stopPropagation();
     // Don't preventDefault here to allow scrolling if needed, 
     // but we'll prevent it in touchmove if dragging
@@ -816,54 +782,51 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-center w-full sm:w-auto gap-1.5 glass p-1 rounded-2xl shadow-lg border border-white/20">
-          {!isPersonal && !readOnly && (
+        <div className="flex flex-wrap items-center justify-center w-full sm:w-auto gap-2.5 glass p-1.5 rounded-2xl shadow-lg border border-white/20">
+          {!isActuallyReadOnly && (
             <>
-              <div className="flex flex-wrap items-center justify-center gap-1 flex-1 sm:flex-none w-full sm:w-auto">
-                {[
-                  { id: 'pending', name: 'Pending', active: 'bg-amber-500/80 text-white shadow-md ring-1 ring-amber-500/20', inactive: 'text-amber-700 hover:bg-amber-50/20' },
-                  { id: 'in-progress', name: 'In Progress', active: 'bg-blue-500/80 text-white shadow-md ring-1 ring-blue-500/20', inactive: 'text-blue-700 hover:bg-blue-50/20' },
-                  { id: 'completed', name: 'Completed', active: 'bg-emerald-500/80 text-white shadow-md ring-1 ring-emerald-500/20', inactive: 'text-emerald-700 hover:bg-emerald-50/20' },
-                ].map((status) => {
-                  const isActive = (project.status || 'pending') === status.id;
-                  return (
-                    <button
-                      key={status.id}
-                      onClick={() => handleProjectStatusChange(status.id as any)}
-                      className={clsx(
-                        "flex-1 sm:flex-none px-3 py-1.5 text-[10px] sm:text-xs font-bold rounded-xl transition-all duration-300 uppercase tracking-wider text-center",
-                        isActive ? status.active : status.inactive
-                      )}
-                    >
-                      {status.name}
-                    </button>
-                  );
-                })}
-                <div className="hidden sm:block w-px h-5 bg-white/20 mx-1"></div>
-              </div>
-              <button
-                onClick={handleShare}
-                className="flex-1 sm:flex-none inline-flex items-center justify-center px-3 py-1.5 border border-white/20 text-[10px] sm:text-xs font-bold rounded-xl text-slate-700 bg-white/10 hover:bg-white/20 transition-all active:scale-95 uppercase tracking-wider"
-              >
-                <Share2 className="h-3.5 w-3.5 mr-1.5 text-slate-500" />
-                Share
-              </button>
-              {isPersonal && (
+              {!isPersonal && (
+                <div className="flex flex-wrap items-center justify-center gap-1 flex-1 sm:flex-none w-full sm:w-auto">
+                  {[
+                    { id: 'pending', name: 'Pending', active: 'bg-amber-500/80 text-white shadow-md ring-1 ring-amber-500/20', inactive: 'text-amber-700 hover:bg-amber-50/20' },
+                    { id: 'in-progress', name: 'In Progress', active: 'bg-blue-500/80 text-white shadow-md ring-1 ring-blue-500/20', inactive: 'text-blue-700 hover:bg-blue-50/20' },
+                    { id: 'completed', name: 'Completed', active: 'bg-emerald-500/80 text-white shadow-md ring-1 ring-emerald-500/20', inactive: 'text-emerald-700 hover:bg-emerald-50/20' },
+                  ].map((status) => {
+                    const isActive = (project.status || 'pending') === status.id;
+                    return (
+                      <button
+                        key={status.id}
+                        onClick={() => handleProjectStatusChange(status.id as any)}
+                        className={clsx(
+                          "flex-1 sm:flex-none px-3 py-1.5 text-[10px] sm:text-xs font-bold rounded-xl transition-all duration-300 uppercase tracking-wider text-center",
+                          isActive ? status.active : status.inactive
+                        )}
+                      >
+                        {status.name}
+                      </button>
+                    );
+                  })}
+                  <div className="hidden sm:block w-px h-5 bg-white/20 mx-1"></div>
+                </div>
+              )}
+              
+              {isPersonal ? (
+                <CalendarShareManager />
+              ) : (
                 <button
-                  onClick={handleNotionSync}
-                  disabled={isSyncingToNotion}
-                  className="flex-1 sm:flex-none inline-flex items-center justify-center px-3 py-1.5 border border-white/20 text-[10px] sm:text-xs font-bold rounded-xl text-white bg-indigo-600/80 hover:bg-indigo-700/80 transition-all active:scale-95 uppercase tracking-wider disabled:opacity-50"
+                  onClick={handleShare}
+                  className="flex-1 sm:flex-none inline-flex items-center justify-center px-3 py-1.5 border border-white/20 text-[10px] sm:text-xs font-bold rounded-xl text-slate-700 bg-white/10 hover:bg-white/20 transition-all active:scale-95 uppercase tracking-wider"
                 >
-                  <ExternalLink className={clsx("h-3.5 w-3.5 mr-1.5", isSyncingToNotion && "animate-spin")} />
-                  {isSyncingToNotion ? 'Syncing...' : 'Sync to Notion'}
+                  <Share2 className="h-3.5 w-3.5 mr-1.5 text-slate-500" />
+                  Share
                 </button>
               )}
             </>
           )}
-          {!isPersonal && readOnly && (
+          {isActuallyReadOnly && (
             <span className="flex-1 sm:flex-none justify-center px-3 py-1.5 text-[10px] sm:text-xs font-bold text-slate-500 flex items-center uppercase tracking-wider">
-              <Share2 className="h-3.5 w-3.5 mr-1.5" />
-              Shared View
+              <Lock className="h-3.5 w-3.5 mr-1.5" />
+              Read Only View
             </span>
           )}
         </div>
@@ -899,7 +862,7 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
             List
           </button>
         </div>
-        {!readOnly && (
+        {!isActuallyReadOnly && (
           <button
             onClick={() => setIsAddingTask(true)}
             className="inline-flex items-center justify-center px-5 py-2 border border-transparent text-xs sm:text-sm font-bold rounded-xl shadow-lg text-white bg-indigo-600/80 hover:bg-indigo-700/80 transition-all active:scale-95 backdrop-blur-sm"
@@ -915,7 +878,7 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
           <div className="glass rounded-3xl shadow-2xl max-w-lg w-full max-h-[85vh] sm:max-h-[90vh] flex flex-col border border-white/20 overflow-hidden">
             <div className="flex justify-between items-center px-4 sm:px-8 py-3 sm:py-6 border-b border-white/10 bg-white/5 backdrop-blur-md">
               <h3 className="text-base sm:text-xl font-extrabold text-slate-900 tracking-tight">
-                {readOnly ? 'View Task' : editingTask ? 'Edit Task' : 'Add New Task'}
+                {isActuallyReadOnly ? 'View Task' : editingTask ? 'Edit Task' : 'Add New Task'}
               </h3>
               <button onClick={closeTaskForm} className="p-1.5 sm:p-2 rounded-xl hover:bg-white/20 text-slate-400 hover:text-slate-600 transition-all">
                 <X className="h-5 w-5 sm:h-6 sm:w-6" />
@@ -924,7 +887,7 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
             
             <div className="p-5 sm:p-8 overflow-y-auto flex-1 no-scrollbar">
               <form id="task-form" onSubmit={handleSaveTask} className="space-y-5 sm:space-y-6">
-                <fieldset disabled={readOnly} className="space-y-5 sm:space-y-6">
+                <fieldset disabled={isActuallyReadOnly} className="space-y-5 sm:space-y-6">
                   <div>
                     <label className="block text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 sm:mb-2 ml-1">Task Title</label>
                     <input
@@ -1058,7 +1021,7 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
                         </div>
                       ))}
                     </div>
-                    {!readOnly && (
+                    {!isActuallyReadOnly && (
                       <div className="flex flex-col gap-2">
                         <input
                           type="text"
@@ -1101,7 +1064,7 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
             
             <div className="px-5 sm:px-8 py-4 sm:py-6 border-t border-white/10 bg-white/5 backdrop-blur-md flex justify-between items-center">
               <div>
-                {editingTask && !readOnly && (
+                {editingTask && !isActuallyReadOnly && (
                   <button
                     type="button"
                     onClick={() => setTaskToDelete(editingTask.id)}
@@ -1119,7 +1082,7 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
                 >
                   Cancel
                 </button>
-                {!readOnly && (
+                {!isActuallyReadOnly && (
                   <button
                     type="submit"
                     form="task-form"

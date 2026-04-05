@@ -3,7 +3,7 @@ import { collection, query, where, onSnapshot, addDoc, serverTimestamp, orderBy,
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from './AuthProvider';
 import { Project, Designer } from '../types';
-import { Plus, MapPin, Phone, Home, Calendar as CalendarIcon, ChevronRight, HardHat, FolderOpen, UserPlus, User, X } from 'lucide-react';
+import { Plus, MapPin, Phone, Home, Calendar as CalendarIcon, ChevronRight, FolderOpen, UserPlus, User, X, ArrowUpDown } from 'lucide-react';
 import clsx from 'clsx';
 import { format } from 'date-fns';
 
@@ -28,6 +28,8 @@ export default function Dashboard({ onSelectProject }: DashboardProps) {
     designer: '',
     startDate: format(new Date(), 'yyyy-MM-dd')
   });
+  const [sortField, setSortField] = useState<'name' | 'startDate' | 'status'>('name');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
   useEffect(() => {
     if (!user) return;
@@ -134,7 +136,24 @@ export default function Dashboard({ onSelectProject }: DashboardProps) {
     }
   };
 
-  const filteredProjects = projects.filter(p => (p.status || 'pending') === activeTab);
+  const filteredProjects = projects
+    .filter(p => (p.status || 'pending') === activeTab)
+    .sort((a, b) => {
+      let valA: any = a[sortField];
+      let valB: any = b[sortField];
+
+      if (sortField === 'startDate') {
+        valA = valA?.toDate ? valA.toDate().getTime() : new Date(valA || 0).getTime();
+        valB = valB?.toDate ? valB.toDate().getTime() : new Date(valB || 0).getTime();
+      } else {
+        valA = (valA || '').toString().toLowerCase();
+        valB = (valB || '').toString().toLowerCase();
+      }
+
+      if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
+      if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -165,32 +184,61 @@ export default function Dashboard({ onSelectProject }: DashboardProps) {
         </div>
       </div>
 
-      <div className="glass rounded-2xl p-1 sm:p-1.5 inline-flex w-full sm:w-auto overflow-x-auto no-scrollbar border border-white/20">
-        {[
-          { id: 'pending', name: 'Pending' },
-          { id: 'in-progress', name: 'In Progress' },
-          { id: 'completed', name: 'Completed' },
-        ].map((tab) => (
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div className="glass rounded-2xl p-1 sm:p-1.5 inline-flex w-full sm:w-auto overflow-x-auto no-scrollbar border border-white/20">
+          {[
+            { id: 'pending', name: 'Pending' },
+            { id: 'in-progress', name: 'In Progress' },
+            { id: 'completed', name: 'Completed' },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
+              className={clsx(
+                "flex-1 sm:flex-none whitespace-nowrap py-2.5 px-5 rounded-xl font-semibold text-sm transition-all duration-200 flex items-center justify-center",
+                activeTab === tab.id
+                  ? 'bg-white/60 text-indigo-800 shadow-sm backdrop-blur-md'
+                  : 'text-slate-500 hover:text-slate-700 hover:bg-white/10'
+              )}
+            >
+              <FolderOpen className={clsx("mr-2 h-4 w-4", activeTab === tab.id ? "text-indigo-500" : "text-slate-400")} />
+              {tab.name}
+              <span className={clsx(
+                "ml-2 py-0.5 px-2 rounded-lg text-xs font-bold",
+                activeTab === tab.id ? "bg-indigo-50/50 text-indigo-600 backdrop-blur-sm" : "bg-white/20 text-slate-600 backdrop-blur-sm"
+              )}>
+                {projects.filter(p => (p.status || 'pending') === tab.id).length}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-3 ml-auto lg:ml-0">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Sort by</span>
+            <div className="relative">
+              <select
+                value={sortField}
+                onChange={(e) => setSortField(e.target.value as any)}
+                className="glass-input text-xs font-bold py-2 pl-3 pr-8 rounded-xl outline-none appearance-none cursor-pointer border border-white/20 min-w-[120px]"
+              >
+                <option value="name">Name</option>
+                <option value="startDate">Start Date</option>
+                <option value="status">Status</option>
+              </select>
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
+                <ChevronRight className="h-3 w-3 text-slate-400 rotate-90" />
+              </div>
+            </div>
+          </div>
           <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id as any)}
-            className={clsx(
-              "flex-1 sm:flex-none whitespace-nowrap py-2.5 px-5 rounded-xl font-semibold text-sm transition-all duration-200 flex items-center justify-center",
-              activeTab === tab.id
-                ? 'bg-white/60 text-indigo-800 shadow-sm backdrop-blur-md'
-                : 'text-slate-500 hover:text-slate-700 hover:bg-white/10'
-            )}
+            onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+            className="glass p-2 rounded-xl border border-white/20 hover:bg-white/20 transition-all group"
+            title={sortOrder === 'asc' ? 'Ascending' : 'Descending'}
           >
-            <FolderOpen className={clsx("mr-2 h-4 w-4", activeTab === tab.id ? "text-indigo-500" : "text-slate-400")} />
-            {tab.name}
-            <span className={clsx(
-              "ml-2 py-0.5 px-2 rounded-lg text-xs font-bold",
-              activeTab === tab.id ? "bg-indigo-50/50 text-indigo-600 backdrop-blur-sm" : "bg-white/20 text-slate-600 backdrop-blur-sm"
-            )}>
-              {projects.filter(p => (p.status || 'pending') === tab.id).length}
-            </span>
+            <ArrowUpDown className={clsx("h-4 w-4 transition-transform duration-300", sortOrder === 'desc' && "rotate-180", "text-indigo-500")} />
           </button>
-        ))}
+        </div>
       </div>
 
       {isAddingDesigner && (
@@ -380,9 +428,6 @@ export default function Dashboard({ onSelectProject }: DashboardProps) {
         ))}
         {filteredProjects.length === 0 && !isAdding && (
           <div className="col-span-full text-center py-16 glass rounded-2xl border-2 border-dashed border-white/20">
-            <div className="bg-white/10 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 backdrop-blur-sm">
-              <HardHat className="h-8 w-8 text-slate-400" />
-            </div>
             <h3 className="text-lg font-bold text-slate-900">No {activeTab.replace('-', ' ')} projects</h3>
             <p className="mt-2 text-sm text-slate-500 max-w-xs mx-auto">
               {activeTab === 'pending' ? 'Get started by creating a new project.' : `You don't have any projects in this folder.`}
