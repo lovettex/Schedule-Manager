@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { doc, getDoc, collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, serverTimestamp, orderBy } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, serverTimestamp, orderBy, deleteField } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { Project, Task, Subtask } from '../types';
-import { ArrowLeft, Plus, Calendar as CalendarIcon, Clock, CheckCircle, Circle, Trash2, Edit2, X, Bell, FolderOpen, Share2, Copy, ChevronRight, MapPin, Home, User, CheckCircle2, ChevronUp, ChevronDown, Check, Lock } from 'lucide-react';
-import { format, parseISO, startOfWeek, addDays, isSameDay, startOfMonth, endOfMonth, eachDayOfInterval, isBefore, isAfter } from 'date-fns';
+import { ArrowLeft, Plus, Calendar as CalendarIcon, Clock, CheckCircle, Circle, Trash2, Edit2, X, Bell, FolderOpen, Share2, Copy, ChevronRight, MapPin, Home, User, CheckCircle2, ChevronUp, ChevronDown, Check, Lock, Repeat, Download } from 'lucide-react';
+import { format, parseISO, startOfWeek, addDays, addWeeks, addMonths, isSameDay, startOfMonth, endOfMonth, eachDayOfInterval, isBefore, isAfter, add } from 'date-fns';
 import clsx from 'clsx';
 
 import { useAuth } from './AuthProvider';
@@ -57,9 +57,15 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
     startTime: '',
     endDate: format(new Date(), 'yyyy-MM-dd'),
     endTime: '',
+    hasNoEndDate: false,
     status: 'pending' as 'pending' | 'in-progress' | 'completed',
     subtasks: [] as Subtask[],
-    color: ''
+    color: '',
+    recurrence: {
+      frequency: 'none' as 'none' | 'daily' | 'weekly' | 'monthly',
+      interval: 1,
+      endDate: ''
+    }
   });
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
   const [newSubtaskDueDate, setNewSubtaskDueDate] = useState('');
@@ -193,16 +199,47 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
         return cleanSt;
       });
 
-      const taskDataToSave = {
-        ...taskForm,
+      const startDate = new Date(taskForm.startDate + 'T00:00:00');
+      const endDate = taskForm.hasNoEndDate ? startDate : new Date(taskForm.endDate + 'T00:00:00');
+
+      const taskDataToSave: any = {
+        title: taskForm.title,
+        description: taskForm.description,
+        startDate,
+        endDate,
+        hasNoEndDate: taskForm.hasNoEndDate,
+        status: taskForm.status,
         subtasks: cleanSubtasks,
-        startDate: new Date(taskForm.startDate + 'T00:00:00'),
-        endDate: new Date(taskForm.endDate + 'T00:00:00'),
       };
 
-      // Remove empty time fields
-      if (!taskDataToSave.startTime) delete (taskDataToSave as any).startTime;
-      if (!taskDataToSave.endTime) delete (taskDataToSave as any).endTime;
+      if (taskForm.startTime) {
+        taskDataToSave.startTime = taskForm.startTime;
+      } else if (editingTask) {
+        taskDataToSave.startTime = deleteField();
+      }
+
+      const finalEndTime = taskForm.hasNoEndDate ? '' : taskForm.endTime;
+      if (finalEndTime) {
+        taskDataToSave.endTime = finalEndTime;
+      } else if (editingTask) {
+        taskDataToSave.endTime = deleteField();
+      }
+
+      if (taskForm.color) {
+        taskDataToSave.color = taskForm.color;
+      } else if (editingTask) {
+        taskDataToSave.color = deleteField();
+      }
+
+      if (taskForm.recurrence.frequency !== 'none') {
+        taskDataToSave.recurrence = {
+          frequency: taskForm.recurrence.frequency,
+          interval: taskForm.recurrence.interval,
+          endDate: taskForm.recurrence.endDate
+        };
+      } else if (editingTask) {
+        taskDataToSave.recurrence = deleteField();
+      }
 
       if (editingTask) {
         const taskRef = doc(db, 'tasks', editingTask.id);
@@ -212,13 +249,51 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
           updatedAt: serverTimestamp()
         });
       } else {
-        await addDoc(collection(db, 'tasks'), {
+        // Create the primary task
+        const docRef = await addDoc(collection(db, 'tasks'), {
           ...taskDataToSave,
           projectId,
           ownerId: user?.uid || '',
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         });
+
+        // Generate recurring instances if needed
+        if (taskForm.recurrence.frequency !== 'none' && taskForm.recurrence.endDate) {
+          const parentId = docRef.id;
+          const recurrenceEndDate = new Date(taskForm.recurrence.endDate + 'T23:59:59');
+          const duration = endDate.getTime() - startDate.getTime();
+          
+          let currentStart = startDate;
+          let instancesCreated = 0;
+
+          while (instancesCreated < 100) { // Safety limit
+            if (taskForm.recurrence.frequency === 'daily') {
+              currentStart = add(currentStart, { days: taskForm.recurrence.interval });
+            } else if (taskForm.recurrence.frequency === 'weekly') {
+              currentStart = add(currentStart, { weeks: taskForm.recurrence.interval });
+            } else if (taskForm.recurrence.frequency === 'monthly') {
+              currentStart = add(currentStart, { months: taskForm.recurrence.interval });
+            }
+
+            if (isAfter(currentStart, recurrenceEndDate)) break;
+
+            const currentEnd = new Date(currentStart.getTime() + duration);
+            
+            await addDoc(collection(db, 'tasks'), {
+              ...taskDataToSave,
+              startDate: currentStart,
+              endDate: currentEnd,
+              projectId,
+              ownerId: user?.uid || '',
+              parentId, // Link to parent
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp()
+            });
+            
+            instancesCreated++;
+          }
+        }
       }
       closeTaskForm();
     } catch (error) {
@@ -261,6 +336,145 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `projects/${projectId}`);
     }
+  };
+
+  const exportToICS = () => {
+    let icsContent = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//Project Management//EN',
+      'CALSCALE:GREGORIAN',
+      'METHOD:PUBLISH'
+    ];
+
+    tasks.forEach(task => {
+      const startDate = task.startDate.toDate ? task.startDate.toDate() : new Date(task.startDate);
+      const endDate = task.endDate.toDate ? task.endDate.toDate() : new Date(task.endDate);
+      
+      const formatICSDate = (date: Date, timeStr?: string) => {
+        const d = new Date(date);
+        if (timeStr) {
+          const [hours, minutes] = timeStr.split(':');
+          d.setHours(parseInt(hours, 10), parseInt(minutes, 10), 0);
+        }
+        return d.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+      };
+
+      const formatICSAllDay = (date: Date) => {
+        return format(date, 'yyyyMMdd');
+      };
+
+      icsContent.push('BEGIN:VEVENT');
+      icsContent.push(`UID:${task.id}@projectmanagement`);
+      icsContent.push(`DTSTAMP:${formatICSDate(new Date())}`);
+      
+      if (task.hasNoEndDate && !task.startTime) {
+        icsContent.push(`DTSTART;VALUE=DATE:${formatICSAllDay(startDate)}`);
+        const nextDay = new Date(startDate);
+        nextDay.setDate(nextDay.getDate() + 1);
+        icsContent.push(`DTEND;VALUE=DATE:${formatICSAllDay(nextDay)}`);
+      } else if (task.hasNoEndDate && task.startTime) {
+        icsContent.push(`DTSTART:${formatICSDate(startDate, task.startTime)}`);
+        const endD = new Date(startDate);
+        const [hours, minutes] = task.startTime.split(':');
+        endD.setHours(parseInt(hours, 10) + 1, parseInt(minutes, 10), 0);
+        icsContent.push(`DTEND:${formatICSDate(endD)}`);
+      } else {
+        if (!task.startTime && !task.endTime) {
+          icsContent.push(`DTSTART;VALUE=DATE:${formatICSAllDay(startDate)}`);
+          const nextDay = new Date(endDate);
+          nextDay.setDate(nextDay.getDate() + 1);
+          icsContent.push(`DTEND;VALUE=DATE:${formatICSAllDay(nextDay)}`);
+        } else {
+          icsContent.push(`DTSTART:${formatICSDate(startDate, task.startTime || '00:00')}`);
+          icsContent.push(`DTEND:${formatICSDate(endDate, task.endTime || '23:59')}`);
+        }
+      }
+
+      icsContent.push(`SUMMARY:${task.title}`);
+      if (task.description) {
+        icsContent.push(`DESCRIPTION:${task.description.replace(/\n/g, '\\n')}`);
+      }
+      icsContent.push('END:VEVENT');
+    });
+
+    icsContent.push('END:VCALENDAR');
+
+    const blob = new Blob([icsContent.join('\r\n')], { type: 'text/calendar;charset=utf-8' });
+    const link = document.createElement('a');
+    link.href = window.URL.createObjectURL(blob);
+    link.setAttribute('download', `${project?.name || 'calendar'}.ics`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const exportSingleTaskToICS = (task: Task) => {
+    let icsContent = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//Project Management//EN',
+      'CALSCALE:GREGORIAN',
+      'METHOD:PUBLISH'
+    ];
+
+    const startDate = task.startDate.toDate ? task.startDate.toDate() : new Date(task.startDate);
+    const endDate = task.endDate.toDate ? task.endDate.toDate() : new Date(task.endDate);
+    
+    const formatICSDate = (date: Date, timeStr?: string) => {
+      const d = new Date(date);
+      if (timeStr) {
+        const [hours, minutes] = timeStr.split(':');
+        d.setHours(parseInt(hours, 10), parseInt(minutes, 10), 0);
+      }
+      return d.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+    };
+
+    const formatICSAllDay = (date: Date) => {
+      return format(date, 'yyyyMMdd');
+    };
+
+    icsContent.push('BEGIN:VEVENT');
+    icsContent.push(`UID:${task.id}@projectmanagement`);
+    icsContent.push(`DTSTAMP:${formatICSDate(new Date())}`);
+    
+    if (task.hasNoEndDate && !task.startTime) {
+      icsContent.push(`DTSTART;VALUE=DATE:${formatICSAllDay(startDate)}`);
+      const nextDay = new Date(startDate);
+      nextDay.setDate(nextDay.getDate() + 1);
+      icsContent.push(`DTEND;VALUE=DATE:${formatICSAllDay(nextDay)}`);
+    } else if (task.hasNoEndDate && task.startTime) {
+      icsContent.push(`DTSTART:${formatICSDate(startDate, task.startTime)}`);
+      const endD = new Date(startDate);
+      const [hours, minutes] = task.startTime.split(':');
+      endD.setHours(parseInt(hours, 10) + 1, parseInt(minutes, 10), 0);
+      icsContent.push(`DTEND:${formatICSDate(endD)}`);
+    } else {
+      if (!task.startTime && !task.endTime) {
+        icsContent.push(`DTSTART;VALUE=DATE:${formatICSAllDay(startDate)}`);
+        const nextDay = new Date(endDate);
+        nextDay.setDate(nextDay.getDate() + 1);
+        icsContent.push(`DTEND;VALUE=DATE:${formatICSAllDay(nextDay)}`);
+      } else {
+        icsContent.push(`DTSTART:${formatICSDate(startDate, task.startTime || '00:00')}`);
+        icsContent.push(`DTEND:${formatICSDate(endDate, task.endTime || '23:59')}`);
+      }
+    }
+
+    icsContent.push(`SUMMARY:${task.title}`);
+    if (task.description) {
+      icsContent.push(`DESCRIPTION:${task.description.replace(/\n/g, '\\n')}`);
+    }
+    icsContent.push('END:VEVENT');
+    icsContent.push('END:VCALENDAR');
+
+    const blob = new Blob([icsContent.join('\r\n')], { type: 'text/calendar;charset=utf-8' });
+    const link = document.createElement('a');
+    link.href = window.URL.createObjectURL(blob);
+    link.setAttribute('download', `${task.title || 'task'}.ics`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const handleStatusChange = async (taskId: string, newStatus: 'pending' | 'in-progress' | 'completed') => {
@@ -354,9 +568,19 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
       startTime: task.startTime || '',
       endDate: format(task.endDate.toDate ? task.endDate.toDate() : new Date(task.endDate), 'yyyy-MM-dd'),
       endTime: task.endTime || '',
+      hasNoEndDate: task.hasNoEndDate || false,
       status: task.status,
       subtasks: task.subtasks || [],
-      color: task.color || ''
+      color: task.color || '',
+      recurrence: task.recurrence ? {
+        frequency: task.recurrence.frequency,
+        interval: task.recurrence.interval,
+        endDate: task.recurrence.endDate || ''
+      } : {
+        frequency: 'none' as 'none',
+        interval: 1,
+        endDate: ''
+      }
     });
     setIsAddingTask(true);
   };
@@ -371,9 +595,15 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
       startTime: '',
       endDate: format(new Date(), 'yyyy-MM-dd'),
       endTime: '',
+      hasNoEndDate: false,
       status: 'pending',
       subtasks: [],
-      color: ''
+      color: '',
+      recurrence: {
+        frequency: 'none' as 'none',
+        interval: 1,
+        endDate: ''
+      }
     });
     setNewSubtaskTitle('');
     setNewSubtaskDueDate('');
@@ -560,8 +790,9 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
         </div>
         <div className="grid grid-cols-7 border-b border-white/10 bg-white/5 backdrop-blur-sm">
           {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
-            <div key={d} className="py-3 text-center text-[9px] font-black text-slate-500 uppercase tracking-[0.2em]">
-              {d}
+            <div key={d} className="py-2 sm:py-3 text-center text-[10px] sm:text-xs font-black text-slate-500 uppercase tracking-widest sm:tracking-[0.2em]">
+              <span className="sm:hidden">{d.charAt(0)}</span>
+              <span className="hidden sm:inline">{d}</span>
             </div>
           ))}
         </div>
@@ -614,17 +845,17 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
                 data-day={day.toISOString()}
                 style={{ zIndex: 100 - i }}
                 className={clsx(
-                  "min-h-[100px] sm:min-h-[140px] border-b border-r border-white/10 relative flex flex-col transition-all duration-300",
+                  "min-h-[80px] sm:min-h-[140px] border-b border-r border-white/10 relative flex flex-col transition-all duration-300",
                   !isSameDay(day, monthStart) && day.getMonth() !== monthStart.getMonth() ? "bg-white/5 opacity-40" : "hover:bg-white/10"
                 )}
                 onMouseEnter={() => handleMouseEnterDay(day)}
               >
                 <div className={clsx(
-                  "text-right text-[10px] p-2 pb-1 font-black tracking-tighter text-slate-400"
+                  "text-right text-xs sm:text-sm p-1.5 sm:p-2 pb-0.5 sm:pb-1 font-black tracking-tighter text-slate-500"
                 )}>
                   {format(day, 'd')}
                 </div>
-                <div className="flex-1 space-y-1 pb-2 px-1">
+                <div className="flex-1 space-y-0.5 sm:space-y-1 pb-1 sm:pb-2 px-0.5 sm:px-1 overflow-hidden">
                   {dayTasks.map(task => {
                     let start = task.startDate.toDate ? task.startDate.toDate() : new Date(task.startDate);
                     let end = task.endDate.toDate ? task.endDate.toDate() : new Date(task.endDate);
@@ -656,10 +887,10 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
                         key={task.id} 
                         onClick={() => handleTaskClick(task)}
                         className={clsx(
-                          "text-[9px] sm:text-[10px] cursor-pointer relative z-10 transition-all hover:brightness-110 active:scale-[0.98] block group",
-                          isActualStart ? "rounded-l-md ml-1" : "rounded-l-none ml-0",
-                          isActualEnd ? "rounded-r-md mr-1" : "rounded-r-none mr-0",
-                          "py-0.5 my-1 shadow-sm",
+                          "text-[10px] sm:text-xs cursor-pointer relative z-10 transition-all hover:brightness-110 active:scale-[0.98] block group",
+                          isActualStart ? "rounded-l-md ml-0.5 sm:ml-1" : "rounded-l-none ml-0",
+                          isActualEnd ? "rounded-r-md mr-0.5 sm:mr-1" : "rounded-r-none mr-0",
+                          "py-0.5 sm:py-1 my-0.5 sm:my-1 shadow-sm",
                           isDraggingThis ? "opacity-75 ring-2 ring-indigo-400 scale-105 z-50" : ""
                         )}
                         style={{ backgroundColor: task.color || statusColorHex }}
@@ -681,7 +912,7 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
                         )}
                         <div 
                           className={clsx(
-                            "h-full flex items-center min-h-[16px] font-black",
+                            "h-full flex items-center min-h-[18px] sm:min-h-[24px] font-black",
                             task.color ? "px-1" : (isActualStart ? "pl-1.5" : "pl-2"),
                             !task.color && (isActualEnd ? "pr-1.5" : "pr-2"),
                           )}
@@ -689,13 +920,16 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
                         >
                           {showTitle && (
                             <div 
-                              className="flex items-center absolute left-1.5 right-auto z-30 pointer-events-none overflow-hidden" 
+                              className="flex items-center absolute left-1 sm:left-1.5 right-auto z-30 pointer-events-none overflow-hidden" 
                               style={{ 
                                 width: 'max-content',
-                                maxWidth: `calc(${spanDays * 100}% + ${(spanDays - 1) * 1}px - 12px)`
+                                maxWidth: `calc(${spanDays * 100}% + ${(spanDays - 1) * 1}px - 8px)`
                               }}
                             >
-                              <span className="block truncate drop-shadow-sm">{task.title}</span>
+                              <div className="flex items-center min-w-0">
+                                {(task.recurrence || task.parentId) && <Repeat className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-0.5 sm:mr-1 flex-shrink-0 opacity-80" />}
+                                <span className="block truncate drop-shadow-sm leading-tight">{task.title}</span>
+                              </div>
                             </div>
                           )}
                           &nbsp;
@@ -707,10 +941,10 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
                     <div 
                       key={st.id}
                       onClick={(e) => { e.stopPropagation(); openEditForm(st.parentTask); }}
-                      className="text-[9px] sm:text-[10px] py-0.5 px-2 mx-1.5 mt-0.5 rounded-lg bg-white/40 text-slate-600 border border-white/40 truncate cursor-pointer hover:bg-white/60 flex items-center transition-colors"
+                      className="text-[10px] sm:text-xs py-0.5 sm:py-1 px-1 sm:px-2 mx-0.5 sm:mx-1.5 mt-0.5 rounded-lg bg-white/40 text-slate-600 border border-white/40 truncate cursor-pointer hover:bg-white/60 flex items-center transition-colors"
                       title={`${st.parentTask.title} - ${st.title}`}
                     >
-                      <CheckCircle className={clsx("w-2.5 h-2.5 mr-1.5 flex-shrink-0", st.completed ? "text-emerald-500" : "text-slate-400")} />
+                      <CheckCircle className={clsx("w-2.5 h-2.5 sm:w-3.5 sm:h-3.5 mr-1 sm:mr-1.5 flex-shrink-0", st.completed ? "text-emerald-500" : "text-slate-400")} />
                       <span className={clsx("truncate font-medium", st.completed && "line-through text-slate-400")}>{st.title}</span>
                     </div>
                   ))}
@@ -811,7 +1045,17 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
               )}
               
               {isPersonal ? (
-                <CalendarShareManager />
+                <>
+                  <button
+                    onClick={exportToICS}
+                    className="flex-1 sm:flex-none inline-flex items-center justify-center px-3 py-1.5 border border-white/20 text-[10px] sm:text-xs font-bold rounded-xl text-slate-700 bg-white/10 hover:bg-white/20 transition-all active:scale-95 uppercase tracking-wider"
+                    title="Export to .ics"
+                  >
+                    <Download className="h-3.5 w-3.5 mr-1.5 text-slate-500" />
+                    Export
+                  </button>
+                  <CalendarShareManager />
+                </>
               ) : (
                 <button
                   onClick={handleShare}
@@ -879,10 +1123,22 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
             <div className="flex justify-between items-center px-4 sm:px-8 py-3 sm:py-6 border-b border-white/10 bg-white/5 backdrop-blur-md">
               <h3 className="text-base sm:text-xl font-extrabold text-slate-900 tracking-tight">
                 {isActuallyReadOnly ? 'View Task' : editingTask ? 'Edit Task' : 'Add New Task'}
+                {editingTask?.parentId && <span className="ml-2 text-xs font-bold text-indigo-500 uppercase tracking-widest">(Recurring Instance)</span>}
               </h3>
-              <button onClick={closeTaskForm} className="p-1.5 sm:p-2 rounded-xl hover:bg-white/20 text-slate-400 hover:text-slate-600 transition-all">
-                <X className="h-5 w-5 sm:h-6 sm:w-6" />
-              </button>
+              <div className="flex items-center gap-2">
+                {editingTask && (
+                  <button 
+                    onClick={() => exportSingleTaskToICS(editingTask)} 
+                    className="p-1.5 sm:p-2 rounded-xl hover:bg-white/20 text-slate-400 hover:text-indigo-600 transition-all"
+                    title="Export task to .ics"
+                  >
+                    <Download className="h-5 w-5 sm:h-6 sm:w-6" />
+                  </button>
+                )}
+                <button onClick={closeTaskForm} className="p-1.5 sm:p-2 rounded-xl hover:bg-white/20 text-slate-400 hover:text-slate-600 transition-all">
+                  <X className="h-5 w-5 sm:h-6 sm:w-6" />
+                </button>
+              </div>
             </div>
             
             <div className="p-5 sm:p-8 overflow-y-auto flex-1 no-scrollbar">
@@ -909,44 +1165,60 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
                       placeholder="Add more details..."
                     />
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5">
-                    <div className="space-y-2">
-                      <label className="block text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 sm:mb-2 ml-1">Start Date & Time (Optional Time)</label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="date"
-                          required
-                          value={taskForm.startDate}
-                          onChange={(e) => setTaskForm({ ...taskForm, startDate: e.target.value })}
-                          className="glass-input block flex-[2.2] min-w-0 rounded-xl py-2.5 sm:py-3 px-3.5 sm:px-4 text-base sm:text-sm outline-none border-[#e15252]"
-                        />
-                        <input
-                          type="time"
-                          value={taskForm.startTime}
-                          onChange={(e) => setTaskForm({ ...taskForm, startTime: e.target.value })}
-                          title="Time (Optional)"
-                          className="glass-input block flex-1 min-w-[90px] rounded-xl py-2.5 sm:py-3 px-2 sm:px-3 text-base sm:text-sm outline-none"
-                        />
-                      </div>
+                  <div className="space-y-3">
+                    <div className="flex items-center ml-1">
+                      <input
+                        type="checkbox"
+                        id="hasNoEndDate"
+                        checked={taskForm.hasNoEndDate}
+                        onChange={(e) => setTaskForm({ ...taskForm, hasNoEndDate: e.target.checked })}
+                        className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-white/40 rounded bg-white/30"
+                      />
+                      <label htmlFor="hasNoEndDate" className="ml-2 block text-sm font-bold text-slate-700 cursor-pointer">
+                        No end date/time (Start time only)
+                      </label>
                     </div>
-                    <div className="space-y-2">
-                      <label className="block text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 sm:mb-2 ml-1">End Date & Time (Optional Time)</label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="date"
-                          required
-                          value={taskForm.endDate}
-                          onChange={(e) => setTaskForm({ ...taskForm, endDate: e.target.value })}
-                          className="glass-input block flex-[2.2] min-w-0 rounded-xl py-2.5 sm:py-3 px-3.5 sm:px-4 text-base sm:text-sm outline-none"
-                        />
-                        <input
-                          type="time"
-                          value={taskForm.endTime}
-                          onChange={(e) => setTaskForm({ ...taskForm, endTime: e.target.value })}
-                          title="Time (Optional)"
-                          className="glass-input block flex-1 min-w-[90px] rounded-xl py-2.5 sm:py-3 px-2 sm:px-3 text-base sm:text-sm outline-none"
-                        />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5">
+                      <div className="space-y-2">
+                        <label className="block text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 sm:mb-2 ml-1">Start Date & Time (Optional Time)</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="date"
+                            required
+                            value={taskForm.startDate}
+                            onChange={(e) => setTaskForm({ ...taskForm, startDate: e.target.value })}
+                            className="glass-input block flex-[2.2] min-w-0 rounded-xl py-2.5 sm:py-3 px-3.5 sm:px-4 text-base sm:text-sm outline-none border-[#e15252]"
+                          />
+                          <input
+                            type="time"
+                            value={taskForm.startTime}
+                            onChange={(e) => setTaskForm({ ...taskForm, startTime: e.target.value })}
+                            title="Time (Optional)"
+                            className="glass-input block flex-1 min-w-[90px] rounded-xl py-2.5 sm:py-3 px-2 sm:px-3 text-base sm:text-sm outline-none"
+                          />
+                        </div>
                       </div>
+                      {!taskForm.hasNoEndDate && (
+                        <div className="space-y-2">
+                          <label className="block text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 sm:mb-2 ml-1">End Date & Time (Optional Time)</label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="date"
+                              required={!taskForm.hasNoEndDate}
+                              value={taskForm.endDate}
+                              onChange={(e) => setTaskForm({ ...taskForm, endDate: e.target.value })}
+                              className="glass-input block flex-[2.2] min-w-0 rounded-xl py-2.5 sm:py-3 px-3.5 sm:px-4 text-base sm:text-sm outline-none"
+                            />
+                            <input
+                              type="time"
+                              value={taskForm.endTime}
+                              onChange={(e) => setTaskForm({ ...taskForm, endTime: e.target.value })}
+                              title="Time (Optional)"
+                              className="glass-input block flex-1 min-w-[90px] rounded-xl py-2.5 sm:py-3 px-2 sm:px-3 text-base sm:text-sm outline-none"
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div>
@@ -960,6 +1232,59 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
                       <option value="in-progress">In Progress</option>
                       <option value="completed">Completed</option>
                     </select>
+                  </div>
+
+                  {/* Recurrence Section */}
+                  <div className="pt-4 border-t border-white/20">
+                    <label className="block text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 ml-1">Recurrence</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 ml-1">Frequency</label>
+                        <select
+                          value={taskForm.recurrence.frequency}
+                          onChange={(e) => setTaskForm({
+                            ...taskForm,
+                            recurrence: { ...taskForm.recurrence, frequency: e.target.value as any }
+                          })}
+                          className="glass-input block w-full rounded-xl py-2 px-3 text-sm outline-none appearance-none"
+                        >
+                          <option value="none">None</option>
+                          <option value="daily">Daily</option>
+                          <option value="weekly">Weekly</option>
+                          <option value="monthly">Monthly</option>
+                        </select>
+                      </div>
+                      {taskForm.recurrence.frequency !== 'none' && (
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 ml-1">Interval</label>
+                          <input
+                            type="number"
+                            min="1"
+                            value={taskForm.recurrence.interval}
+                            onChange={(e) => setTaskForm({
+                              ...taskForm,
+                              recurrence: { ...taskForm.recurrence, interval: parseInt(e.target.value) || 1 }
+                            })}
+                            className="glass-input block w-full rounded-xl py-2 px-3 text-sm outline-none"
+                          />
+                        </div>
+                      )}
+                    </div>
+                    {taskForm.recurrence.frequency !== 'none' && (
+                      <div className="mt-4">
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 ml-1">End Recurrence Date</label>
+                        <input
+                          type="date"
+                          required={taskForm.recurrence.frequency !== 'none'}
+                          value={taskForm.recurrence.endDate}
+                          onChange={(e) => setTaskForm({
+                            ...taskForm,
+                            recurrence: { ...taskForm.recurrence, endDate: e.target.value }
+                          })}
+                          className="glass-input block w-full rounded-xl py-2 px-3 text-sm outline-none"
+                        />
+                      </div>
+                    )}
                   </div>
 
                   <div>
@@ -1112,13 +1437,55 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
               <p className="text-slate-500 max-w-xs mx-auto">Get started by adding your first task to this project.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4">
-              {tasks.map((task) => (
-                <div key={task.id} className="glass-card p-6 rounded-2xl group">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-8">
+              {(() => {
+                const sortedTasks = [...tasks].sort((a, b) => {
+                  const dateA = a.startDate.toDate ? a.startDate.toDate() : new Date(a.startDate);
+                  const dateB = b.startDate.toDate ? b.startDate.toDate() : new Date(b.startDate);
+                  
+                  const dayA = new Date(dateA).setHours(0,0,0,0);
+                  const dayB = new Date(dateB).setHours(0,0,0,0);
+                  
+                  if (dayA !== dayB) {
+                    return dayA - dayB;
+                  }
+                  
+                  const timeA = a.startTime || '00:00';
+                  const timeB = b.startTime || '00:00';
+                  return timeA.localeCompare(timeB);
+                });
+
+                const groupedTasks: { dateStr: string, dateObj: Date, tasks: Task[] }[] = [];
+                sortedTasks.forEach(task => {
+                  const date = task.startDate.toDate ? task.startDate.toDate() : new Date(task.startDate);
+                  const dateStr = format(date, 'yyyy-MM-dd');
+                  let group = groupedTasks.find(g => g.dateStr === dateStr);
+                  if (!group) {
+                    group = { dateStr, dateObj: date, tasks: [] };
+                    groupedTasks.push(group);
+                  }
+                  group.tasks.push(task);
+                });
+
+                return groupedTasks.map(group => (
+                  <div key={group.dateStr} className="relative">
+                    <div className="sticky top-16 z-30 flex items-center mb-4 pt-2 pb-2 bg-slate-50/80 backdrop-blur-md -mx-4 px-4 sm:mx-0 sm:px-0 sm:bg-transparent sm:backdrop-blur-none sm:pt-0">
+                      <div className="bg-indigo-600 text-white px-4 py-2 rounded-xl font-black text-xs sm:text-sm uppercase tracking-widest shadow-md flex items-center">
+                        <CalendarIcon className="w-4 h-4 mr-2 opacity-80" />
+                        {format(group.dateObj, 'MMMM d, yyyy (EEEE)')}
+                      </div>
+                      <div className="h-px bg-indigo-200/50 flex-1 ml-4 hidden sm:block"></div>
+                    </div>
+                    <div className="grid grid-cols-1 gap-4">
+                      {group.tasks.map((task) => (
+                        <div key={task.id} className="glass-card p-6 rounded-2xl group">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="flex-1">
                       <div className="flex items-center gap-3 mb-2">
-                        <h3 className="text-lg font-extrabold text-slate-900">{task.title}</h3>
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-lg font-extrabold text-slate-900">{task.title}</h3>
+                          {(task.recurrence || task.parentId) && <Repeat className="w-4 h-4 text-indigo-500 opacity-70" />}
+                        </div>
                         <span className={clsx(
                           "px-3 py-1 text-[10px] font-black rounded-full uppercase tracking-widest",
                           task.status === 'completed' ? "bg-emerald-100 text-emerald-700" :
@@ -1132,11 +1499,15 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
                       <div className="flex flex-wrap items-center gap-4 text-xs font-bold text-slate-400">
                         <span className="flex items-center">
                           <CalendarIcon className="w-3.5 h-3.5 mr-1.5" /> 
-                          {format(task.startDate.toDate ? task.startDate.toDate() : new Date(task.startDate), 'MMM d')} 
+                          {format(task.startDate.toDate ? task.startDate.toDate() : new Date(task.startDate), 'MMM d (EEE)')} 
                           {task.startTime && <span className="ml-1 text-indigo-500/70">({task.startTime})</span>}
-                          <span className="mx-1">-</span>
-                          {format(task.endDate.toDate ? task.endDate.toDate() : new Date(task.endDate), 'MMM d, yyyy')}
-                          {task.endTime && <span className="ml-1 text-indigo-500/70">({task.endTime})</span>}
+                          {!task.hasNoEndDate && (
+                            <>
+                              <span className="mx-1">-</span>
+                              {format(task.endDate.toDate ? task.endDate.toDate() : new Date(task.endDate), 'MMM d, yyyy (EEE)')}
+                              {task.endTime && <span className="ml-1 text-indigo-500/70">({task.endTime})</span>}
+                            </>
+                          )}
                         </span>
                         <span className="flex items-center"><CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> {task.subtasks?.length || 0} Subtasks</span>
                       </div>
@@ -1216,6 +1587,10 @@ export default function ProjectDetail({ projectId, onBack, readOnly = false, isP
                   )}
                 </div>
               ))}
+                    </div>
+                  </div>
+                ));
+              })()}
             </div>
           )}
         </div>

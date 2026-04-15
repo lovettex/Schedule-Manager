@@ -24,6 +24,8 @@ function AppContent() {
   const [viewingPersonalUid, setViewingPersonalUid] = useState<string | null>(null);
   const [isCalendarMenuOpen, setIsCalendarMenuOpen] = useState(false);
 
+  const path = window.location.pathname;
+
   React.useEffect(() => {
     if (!user || !user.email) return;
 
@@ -55,6 +57,34 @@ function AppContent() {
 
   if (!user) {
     return <Login />;
+  }
+
+  if (path.startsWith('/shared/')) {
+    const projectId = path.split('/')[2];
+    const isPersonal = projectId.startsWith('personal_');
+    
+    return (
+      <div className="min-h-screen flex flex-col relative">
+        <header className="sticky top-0 z-50 bg-white/10 backdrop-blur-xl border-b border-white/20 shadow-sm">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex justify-between h-16">
+              <div className="flex items-center">
+                <a href="/" className="flex items-center hover:opacity-80 transition-opacity">
+                  <h1 className="text-lg sm:text-xl font-black text-slate-900 tracking-widest uppercase">Project Management</h1>
+                </a>
+              </div>
+            </div>
+          </div>
+        </header>
+        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+          <ProjectDetail 
+            projectId={projectId} 
+            readOnly={true} 
+            isPersonal={isPersonal}
+          />
+        </main>
+      </div>
+    );
   }
 
   return (
@@ -159,32 +189,6 @@ function AppContent() {
 }
 
 export default function App() {
-  const path = window.location.pathname;
-  if (path.startsWith('/shared/')) {
-    const projectId = path.split('/')[2];
-    return (
-      <ErrorBoundary>
-        <BackgroundAnimation />
-        <div className="min-h-screen flex flex-col relative">
-          <header className="sticky top-0 z-50 bg-white/10 backdrop-blur-xl border-b border-white/20 shadow-sm">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-              <div className="flex justify-between h-16">
-                <div className="flex items-center">
-                  <a href="/" className="flex items-center hover:opacity-80 transition-opacity">
-                    <h1 className="text-lg sm:text-xl font-black text-slate-900 tracking-widest uppercase">Project Management</h1>
-                  </a>
-                </div>
-              </div>
-            </div>
-          </header>
-          <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-            <ProjectDetail projectId={projectId} readOnly={true} />
-          </main>
-        </div>
-      </ErrorBoundary>
-    );
-  }
-
   return (
     <ErrorBoundary>
       <BackgroundAnimation />

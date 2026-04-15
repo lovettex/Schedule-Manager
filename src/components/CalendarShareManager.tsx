@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { collection, query, where, onSnapshot, addDoc, serverTimestamp, deleteDoc, doc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, addDoc, serverTimestamp, deleteDoc, doc, setDoc } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from './AuthProvider';
 import { Share2, X, UserPlus, Trash2, Mail } from 'lucide-react';
@@ -63,8 +63,9 @@ export default function CalendarShareManager() {
 
     setIsSubmitting(true);
     try {
-      // 1. Create the share record
-      await addDoc(collection(db, 'calendar_shares'), {
+      // 1. Create the share record with a deterministic ID for security rules
+      const shareId = `${user.uid}_${email}`;
+      await setDoc(doc(db, 'calendar_shares', shareId), {
         ownerId: user.uid,
         ownerEmail: user.email,
         ownerName: user.displayName || user.email?.split('@')[0] || 'User',

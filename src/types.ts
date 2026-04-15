@@ -28,6 +28,12 @@ export interface Subtask {
   dueTime?: string;
 }
 
+export interface RecurrenceConfig {
+  frequency: 'daily' | 'weekly' | 'monthly';
+  interval: number;
+  endDate?: string; // ISO string
+}
+
 export interface Task {
   id: string;
   projectId: string;
@@ -37,9 +43,12 @@ export interface Task {
   startTime?: string;
   endDate: string | any; // ISO string or Timestamp
   endTime?: string;
+  hasNoEndDate?: boolean;
   status: 'pending' | 'in-progress' | 'completed';
   subtasks?: Subtask[];
   color?: string;
+  recurrence?: RecurrenceConfig;
+  parentId?: string; // For recurring instances
   createdAt: string | any; // ISO string or Timestamp
   updatedAt: string | any; // ISO string or Timestamp
 }

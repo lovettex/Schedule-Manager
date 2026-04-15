@@ -94,7 +94,7 @@ service cloud.firestore {
 
     function hasCalendarAccess(ownerId) {
       return isAuthenticated() && 
-             (ownerId != null && exists(/databases/$(database)/documents/calendar_shares/$(ownerId + "_" + request.auth.token.email)));
+             (ownerId != null && exists(/databases/$(database)/documents/calendar_shares/$(ownerId + "_" + request.auth.token.email.lower())));
     }
 
     function hasRequiredFields(fields) {
@@ -155,7 +155,7 @@ service cloud.firestore {
     }
 
     function isValidTask() {
-      return hasOnlyAllowedFields(['projectId', 'ownerId', 'title', 'description', 'startDate', 'startTime', 'endDate', 'endTime', 'status', 'subtasks', 'color', 'reminderTiming', 'reminderEmails', 'reminderPhone', 'createdAt', 'updatedAt']) &&
+      return hasOnlyAllowedFields(['projectId', 'ownerId', 'title', 'description', 'startDate', 'startTime', 'endDate', 'endTime', 'hasNoEndDate', 'status', 'subtasks', 'color', 'recurrence', 'parentId', 'reminderTiming', 'reminderEmails', 'reminderPhone', 'createdAt', 'updatedAt']) &&
              request.resource.data.projectId is string &&
              request.resource.data.ownerId is string &&
              validStringLength('title', 1, 100) &&
@@ -163,6 +163,9 @@ service cloud.firestore {
              isValidOptionalString('color', 0, 50) &&
              isValidOptionalString('startTime', 0, 10) &&
              isValidOptionalString('endTime', 0, 10) &&
+             (!('hasNoEndDate' in request.resource.data) || request.resource.data.hasNoEndDate is bool) &&
+             (!('recurrence' in request.resource.data) || (request.resource.data.recurrence is map && request.resource.data.recurrence.keys().hasAll(['frequency', 'interval']) && request.resource.data.recurrence.frequency in ['daily', 'weekly', 'monthly'])) &&
+             isValidOptionalString('parentId', 0, 100) &&
              (!('reminderTiming' in request.resource.data) || request.resource.data.reminderTiming in ['none', 'at_event', '1_hour', '1_day', '1_week']) &&
              (!('reminderEmails' in request.resource.data) || (request.resource.data.reminderEmails is list && request.resource.data.reminderEmails.size() <= 20)) &&
              isValidOptionalString('reminderPhone', 0, 20) &&
@@ -254,7 +257,7 @@ service cloud.firestore {
     }
 
     match /calendar_shares/{shareId} {
-      allow read: if isAuthenticated() && (isOwner(resource.data.ownerId) || request.auth.token.email == resource.data.sharedWithEmail);
+      allow read: if isAuthenticated() && (isOwner(resource.data.ownerId) || request.auth.token.email.lower() == resource.data.sharedWithEmail);
       allow create: if isAuthenticated() && isValidCalendarShare() && isOwner(request.resource.data.ownerId);
       allow update: if false;
       allow delete: if isAuthenticated() && isOwner(resource.data.ownerId);
